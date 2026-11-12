@@ -1105,7 +1105,6 @@ end
 local success, screenGui = pcall(createInterface)
 if not success then
 	warn("GrowBlox UI initialization failed: " .. tostring(screenGui))
-	return
 end
 
 local function onInputBegan(input, gameProcessed)
@@ -1120,7 +1119,11 @@ local function onInputBegan(input, gameProcessed)
 	end
 end
 
-UIS.InputBegan:Connect(onInputBegan)
+pcall(function()
+	if UIS and UIS.InputBegan then
+		UIS.InputBegan:Connect(onInputBegan)
+	end
+end)
 
 -- ===========================================================================
 -- 14. Public test/debug API
