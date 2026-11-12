@@ -913,6 +913,7 @@ local function createInterface()
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "HipHub_GrowBlox"
 	screenGui.ResetOnSpawn = false
+	screenGui.DisplayOrder = 2147483000
 	screenGui.Parent = playerGui
 
 	local mainFrame = Instance.new("Frame")
@@ -921,6 +922,8 @@ local function createInterface()
 	mainFrame.Position = UDim2.new(0, 12, 0.5, -250)
 	mainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 32)
 	mainFrame.BorderSizePixel = 0
+	mainFrame.ClipsDescendants = true
+	mainFrame.Active = true
 	mainFrame.Parent = screenGui
 
 	local uiCorner = Instance.new("UICorner")
@@ -955,6 +958,7 @@ local function createInterface()
 	closeButton.TextColor3 = Color3.fromRGB(160, 170, 200)
 	closeButton.Font = Enum.Font.GothamBold
 	closeButton.TextSize = 12
+	closeButton.Active = true
 	closeButton.Parent = topBar
 	closeButton.MouseButton1Click:Connect(function()
 		safeDestroy(screenGui)
@@ -1030,20 +1034,42 @@ local function createInterface()
 		{ "shootSound", "Sound" },
 	}
 
+	local modeScroll = Instance.new("ScrollingFrame")
+	modeScroll.Name = "ModeScroll"
+	modeScroll.Size = UDim2.new(1, -24, 1, -170)
+	modeScroll.Position = UDim2.new(0, 12, 0, 110)
+	modeScroll.BackgroundTransparency = 1
+	modeScroll.BorderSizePixel = 0
+	modeScroll.ScrollBarThickness = 4
+	modeScroll.ScrollBarImageColor3 = Color3.fromRGB(0, 160, 220)
+	modeScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	modeScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	modeScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	modeScroll.Active = true
+	modeScroll.Parent = mainFrame
+
+	local grid = Instance.new("UIGridLayout")
+	grid.Name = "ModeGrid"
+	grid.CellSize = UDim2.new(0, 96, 0, 30)
+	grid.CellPadding = UDim2.new(0, 8, 0, 8)
+	grid.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	grid.SortOrder = Enum.SortOrder.LayoutOrder
+	grid.Parent = modeScroll
+
 	for i, buttonDef in ipairs(buttonOrder) do
 		local modeName = buttonDef[1]
 		local label = buttonDef[2]
 		local button = Instance.new("TextButton")
 		button.Name = modeName
 		button.Size = UDim2.new(0, 96, 0, 30)
-		button.Position = UDim2.new(0, 12 + ((i - 1) % 3) * 105, 0, 110 + math.floor((i - 1) / 3) * 36)
 		button.BackgroundColor3 = Color3.fromRGB(32, 36, 58)
 		button.BorderSizePixel = 0
 		button.Text = label
 		button.TextColor3 = Color3.fromRGB(200, 210, 240)
 		button.Font = Enum.Font.Gotham
 		button.TextSize = 11
-		button.Parent = mainFrame
+		button.Active = true
+		button.Parent = modeScroll
 
 		local corner = Instance.new("UICorner")
 		corner.CornerRadius = UDim.new(0, 4)
@@ -1079,6 +1105,7 @@ local function createInterface()
 	shootButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 	shootButton.Font = Enum.Font.GothamBold
 	shootButton.TextSize = 13
+	shootButton.Active = true
 	shootButton.Parent = mainFrame
 
 	local shootCorner = Instance.new("UICorner")

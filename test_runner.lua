@@ -264,6 +264,10 @@ ENV.Enum = {
 	EasingStyle = { Quad = "Quad", Bounce = "Bounce" },
 	EasingDirection = { Out = "Out" },
 	UserInputType = { MouseButton1 = "MouseButton1" },
+	AutomaticSize = { Y = "Y" },
+	HorizontalAlignment = { Center = "Center" },
+	ScrollingDirection = { Y = "Y" },
+	SortOrder = { LayoutOrder = "LayoutOrder" },
 }
 ENV.BrickColor = {
 	new = function(_s) return "BrickColor" end,
