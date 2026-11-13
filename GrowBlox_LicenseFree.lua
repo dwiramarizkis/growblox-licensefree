@@ -36,6 +36,25 @@ end
 
 print("[GrowBlox] executor: getgc=" .. tostring(getgc ~= nil) .. " getconstants=" .. tostring(getconsts ~= nil))
 
+-- Modul game (sama seperti k.lua)
+local Shared = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared")
+local WorldRemotes = ReplicatedStorage:FindFirstChild("WorldRemotes") or ReplicatedStorage:WaitForChild("WorldRemotes")
+local SetTileRemote = WorldRemotes and WorldRemotes:FindFirstChild("SetTile")
+
+local ItemDB = nil
+local InventoryModule = nil
+local NetOk, Net = false, nil
+
+pcall(function()
+	ItemDB = require(Shared:FindFirstChild("ItemDB") or Shared.ItemDB)
+end)
+pcall(function()
+	InventoryModule = require(Shared:FindFirstChild("Inventory") or Shared.Inventory)
+end)
+pcall(function()
+	NetOk, Net = pcall(require, Shared:FindFirstChild("Net") or Shared.Net)
+end)
+
 -- ===========================================================================
 -- 1. Konfigurasi
 -- ===========================================================================
@@ -75,6 +94,7 @@ end
 local function isInvTbl(v)
 	return type(rawget(v, "slots")) == "table"
 		and (rawget(v, "capacity") ~= nil or type(rawget(v, "count")) == "function")
+		and (not InventoryModule or getmetatable(v) == InventoryModule)
 end
 
 local function isStateHolder(v)
@@ -82,6 +102,7 @@ local function isStateHolder(v)
 	if type(fn) ~= "function" then return false end
 	local ok, s = pcall(fn)
 	return ok and type(s) == "table" and type(s.x) == "number" and type(s.y) == "number"
+		and s.facing ~= nil and s.vx ~= nil
 end
 
 local function constsOf(fn)
@@ -112,6 +133,53 @@ local function hasConstPair(fn, a, b)
 	return false
 end
 
+-- Persis pola k.lua: SetTile = konstanta "placedAt" + "flips";
+-- fallback ByteNet = konstanta "tile" + "placedAt" + "flips".
+local function isSetTileFn(fn)
+	if not getconsts then return false end
+	if globalFn("islclosure") and not globalFn("islclosure")(fn) then return false end
+	local ok, consts = pcall(getconsts, fn)
+	if not ok or type(consts) ~= "table" then return false end
+	local hasSend, hasPlaced, hasFlips = false, false, false
+	for _, c in pairs(consts) do
+		if c == "tile" or c == "SetTile" then hasSend = true
+		elseif c == "placedAt" then hasPlaced = true
+		elseif c == "flips" then hasFlips = true end
+	end
+	return hasSend and hasPlaced and hasFlips
+end
+
+-- Persis pola k.lua: Punch = "Empty the Vending Machine first!" + ("newCrack" atau "HarvestProvider")
+local function isPunchFn(fn)
+	if not getconsts then return false end
+	if globalFn("islclosure") and not globalFn("islclosure")(fn) then return false end
+	local ok, consts = pcall(getconsts, fn)
+	if not ok or type(consts) ~= "table" then return false end
+	local hasVend, hasMark = false, false
+	for _, c in pairs(consts) do
+		if c == "Empty the Vending Machine first!" then hasVend = true
+		elseif c == "newCrack" or c == "HarvestProvider" then hasMark = true end
+	end
+	return hasVend and hasMark
+end
+
+-- Pastikan fungsi milik game, bukan script ini (persis k.lua)
+local function isGameFn(fn)
+	if fn == isSetTileFn or fn == isPunchFn then return false end
+	local isExecClosure = globalFn("isexecutorclosure")
+	if isExecClosure then
+		local ok, res = pcall(isExecClosure, fn)
+		if ok and res then return false end
+	end
+	if type(debug) == "table" and debug.info then
+		local ok, src = pcall(debug.info, fn, "s")
+		if ok and type(src) == "string" and src ~= "" and not string.find(src, "GrowBlox", 1, true) then
+			return false
+		end
+	end
+	return true
+end
+
 local function scanRefs()
 	if not getgc then
 		print("[GrowBlox] scanRefs: getgc nil")
@@ -137,22 +205,11 @@ local function scanRefs()
 				local ok, isS = pcall(isStateHolder, v)
 				if ok and isS then Refs.State = rawget(v, "state") end
 			end
-		elseif type(v) == "function" then
-			if not Refs.SetTile then
-				-- Pola 1: konstanta "placedAt"+"flips" (k.lua)
-				if hasConstPair(v, "placedAt", "flips") then
-					Refs.SetTile = v
-				-- Pola 2: konstanta "tileChanged"+"layer"+"flip"
-				elseif hasConst(v, "tileChanged") and hasConst(v, "flip") then
-					Refs.SetTile = v
-				end
-			end
-			if not Refs.Punch then
-				if hasConstPair(v, "punch", "punch_miss")
-					or hasConstPair(v, "punchEvent", "punch_miss")
-					or (hasConst(v, "punchEvent") and hasConst(v, "punchCount")) then
-					Refs.Punch = v
-				end
+		elseif type(v) == "function" and (not Refs.SetTile or not Refs.Punch) and isGameFn(v) then
+			if not Refs.SetTile and isSetTileFn(v) then
+				Refs.SetTile = v
+			elseif not Refs.Punch and isPunchFn(v) then
+				Refs.Punch = v
 			end
 		end
 		if Refs.World and Refs.Inv and Refs.State and Refs.SetTile and Refs.Punch then
@@ -219,25 +276,56 @@ end
 -- ===========================================================================
 -- 4. Aksi dasar game
 -- ===========================================================================
-local function placeTile(layer, x, y, id)
-	if not Refs.SetTile then return false end
-	local ok, err = pcall(Refs.SetTile, layer, x, y, id, false, false)
-	if ok then
-		invRemove(id, 1)
+-- Sama persis dengan k.lua: SetTile dulu, fallback ByteNet, fallback remote lama.
+local function sendSetTile(layer, x, y, id)
+	if Refs.SetTile then
+		local ok, err = pcall(Refs.SetTile, layer, x, y, id, false, false)
+		if ok then return true end
+		warn("[GrowBlox] setTile game gagal: " .. tostring(err))
+	end
+	if NetOk and type(Net) == "table" and type(Net.tile) == "table" then
+		local ok = pcall(Net.tile.send, {
+			layer = (layer == "bg") and 2 or 1,
+			x = x,
+			y = y,
+			id = id,
+			flip = false,
+		})
+		if ok then return true end
+	elseif SetTileRemote then
+		pcall(function()
+			SetTileRemote:FireServer(layer, x, y, id, false)
+		end)
 		return true
 	end
-	warn("[GrowBlox] placeTile error: " .. tostring(err))
 	return false
 end
 
-local function punchTile(x, y)
-	if not Refs.Punch then return false end
-	local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
-	if not ok then
-		warn("[GrowBlox] punch error: " .. tostring(err))
+local function placeTile(layer, x, y, id)
+	if not sendSetTile(layer, x, y, id) then
 		return false
 	end
+	-- Update grid lokal + inventory (sama seperti k.lua)
+	local grid = Refs.World and Refs.World[layer]
+	if grid and grid[y] then
+		grid[y][x] = id
+	end
+	invRemove(id, 1)
 	return true
+end
+
+local function punchTile(x, y)
+	if Refs.Punch then
+		local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
+		if not ok then
+			warn("[GrowBlox] punch error: " .. tostring(err))
+			return false
+		end
+		return true
+	end
+	-- Fallback: hapus tile langsung (hanya kalau game mengizinkan)
+	warn("[GrowBlox] Punch tidak ketemu, fallback setTile 0")
+	return sendSetTile("fg", x, y, 0)
 end
 
 local function breakable(id)
