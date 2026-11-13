@@ -12,7 +12,6 @@ local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 
 local player = game:GetService("Players").LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
 local mouse = player:GetMouse()
 
 local isKeyboardPresent = pcall(function()
@@ -22,9 +21,6 @@ end)
 -- ===========================================================================
 -- 1. Anti-duplicate guard
 -- ===========================================================================
-if playerGui:FindFirstChild("HipHub_GrowBlox") then
-	playerGui:FindFirstChild("HipHub_GrowBlox"):Destroy()
-end
 if _G.HipHub_GrowBlox_Running then
 	return
 end
@@ -907,231 +903,129 @@ local function firePrimary()
 end
 
 -- ===========================================================================
--- 12. User interface
+-- 12. WindUI interface
 -- ===========================================================================
+local MODE_OPTIONS = {
+	{ id = "shootParts", label = "Parts" },
+	{ id = "shootNuke", label = "Nuke" },
+	{ id = "shootMagnet", label = "Magnet" },
+	{ id = "shootForceField", label = "ForceField" },
+	{ id = "shootFlinger", label = "Flinger" },
+	{ id = "shootSpin", label = "Spin" },
+	{ id = "shootTrap", label = "Trap" },
+	{ id = "shootSpawn", label = "Spawn" },
+	{ id = "shootVehicle", label = "Vehicle" },
+	{ id = "shootHouse", label = "House" },
+	{ id = "shootSmoke", label = "Smoke" },
+	{ id = "shootNormal", label = "Normal" },
+	{ id = "shootGhost", label = "Ghost" },
+	{ id = "shootResize", label = "Resize" },
+	{ id = "shootTroll", label = "Troll" },
+	{ id = "shootTeleport", label = "Teleport" },
+	{ id = "shootBlackHole", label = "BlackHole" },
+	{ id = "shootHeavy", label = "Heavy" },
+	{ id = "shootLaunch", label = "Launch" },
+	{ id = "shootBounce", label = "Bounce" },
+	{ id = "shootExplode", label = "Explode" },
+	{ id = "shootDrop", label = "Drop" },
+	{ id = "shootBomb", label = "Bomb" },
+	{ id = "shootCrash", label = "Crash" },
+	{ id = "shootTime", label = "Time" },
+	{ id = "shootFire", label = "Fire" },
+	{ id = "shootFreeze", label = "Freeze" },
+	{ id = "shootTornado", label = "Tornado" },
+	{ id = "shootLightning", label = "Lightning" },
+	{ id = "shootFlood", label = "Flood" },
+	{ id = "shootGravity", label = "Gravity" },
+	{ id = "shootSlide", label = "Slide" },
+	{ id = "shootInvisible", label = "Invisible" },
+	{ id = "shootUnanchored", label = "Unanchored" },
+	{ id = "shootBigHead", label = "BigHead" },
+	{ id = "shootButterFly", label = "ButterFly" },
+	{ id = "shootPlant", label = "Plant" },
+	{ id = "shootWater", label = "Water" },
+	{ id = "shootMeteor", label = "Meteor" },
+	{ id = "shootStun", label = "Stun" },
+	{ id = "shootSound", label = "Sound" },
+}
+
+local function applyMode(modeId)
+	if MODE_CONFIG[modeId] == nil then
+		return false
+	end
+	for mode, _ in pairs(MODE_CONFIG) do
+		MODE_CONFIG[mode] = false
+	end
+	MODE_CONFIG[modeId] = true
+	return true
+end
+
 local function createInterface()
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "HipHub_GrowBlox"
-	screenGui.ResetOnSpawn = false
-	screenGui.DisplayOrder = 2147483000
-	screenGui.Parent = playerGui
+	local windUi = loadstring(game:HttpGet(
+		"https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"
+	))()
 
-	local mainFrame = Instance.new("Frame")
-	mainFrame.Name = "MainFrame"
-	mainFrame.Size = UDim2.new(0, 340, 0, 500)
-	mainFrame.Position = UDim2.new(0, 12, 0.5, -250)
-	mainFrame.BackgroundColor3 = Color3.fromRGB(18, 20, 32)
-	mainFrame.BorderSizePixel = 0
-	mainFrame.ClipsDescendants = true
-	mainFrame.Active = true
-	mainFrame.Parent = screenGui
+	local window = windUi:CreateWindow({
+		Title = "GrowBlox",
+		Folder = "GrowBlox",
+		Icon = "solar:folder-2-bold-duotone",
+		NewElements = true,
+		OpenButton = {
+			Title = "Open GrowBlox",
+			Enabled = true,
+			Draggable = true,
+		},
+	})
 
-	local uiCorner = Instance.new("UICorner")
-	uiCorner.CornerRadius = UDim.new(0, 8)
-	uiCorner.Parent = mainFrame
+	local mainTab = window:Tab({
+		Title = "GrowBlox",
+		Desc = "License-free GrowBlox",
+		Icon = "solar:home-2-bold",
+	})
 
-	local topBar = Instance.new("Frame")
-	topBar.Name = "TopBar"
-	topBar.Size = UDim2.new(1, 0, 0, 34)
-	topBar.BackgroundColor3 = Color3.fromRGB(24, 27, 44)
-	topBar.BorderSizePixel = 0
-	topBar.Parent = mainFrame
+	local modeLabels = {}
+	for _, option in ipairs(MODE_OPTIONS) do
+		table.insert(modeLabels, option.label)
+	end
 
-	local title = Instance.new("TextLabel")
-	title.Name = "Title"
-	title.Size = UDim2.new(1, -60, 1, 0)
-	title.Position = UDim2.new(0, 12, 0, 0)
-	title.BackgroundTransparency = 1
-	title.Text = "GROWBLOX"
-	title.TextColor3 = Color3.fromRGB(0, 220, 255)
-	title.Font = Enum.Font.GothamBold
-	title.TextSize = 13
-	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.Parent = topBar
+	mainTab:Dropdown({
+		Title = "Mode",
+		Desc = "Select the part mode",
+		Values = modeLabels,
+		Value = "Parts",
+		Callback = function(selected)
+			for _, option in ipairs(MODE_OPTIONS) do
+				if option.label == selected then
+					applyMode(option.id)
+					break
+				end
+			end
+		end,
+	})
 
-	local closeButton = Instance.new("TextButton")
-	closeButton.Name = "CloseButton"
-	closeButton.Size = UDim2.new(0, 28, 0, 28)
-	closeButton.Position = UDim2.new(1, -32, 0.5, -14)
-	closeButton.BackgroundTransparency = 1
-	closeButton.Text = "X"
-	closeButton.TextColor3 = Color3.fromRGB(160, 170, 200)
-	closeButton.Font = Enum.Font.GothamBold
-	closeButton.TextSize = 12
-	closeButton.Active = true
-	closeButton.Parent = topBar
-	closeButton.MouseButton1Click:Connect(function()
-		safeDestroy(screenGui)
-		_G.HipHub_GrowBlox_Running = nil
-	end)
+	mainTab:Button({
+		Title = "SHOOT",
+		Justify = "Center",
+		Color = Color3.fromRGB(0, 200, 160),
+		Icon = "",
+		Callback = function()
+			firePrimary()
+		end,
+	})
 
-	local statusLabel = Instance.new("TextLabel")
-	statusLabel.Name = "StatusLabel"
-	statusLabel.Size = UDim2.new(1, -24, 0, 26)
-	statusLabel.Position = UDim2.new(0, 12, 0, 46)
-	statusLabel.BackgroundTransparency = 1
-	statusLabel.Text = "Status: Ready (shootParts mode)"
-	statusLabel.TextColor3 = Color3.fromRGB(210, 220, 250)
-	statusLabel.Font = Enum.Font.Gotham
-	statusLabel.TextSize = 11
-	statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-	statusLabel.Parent = mainFrame
-
-	local modeHint = Instance.new("TextLabel")
-	modeHint.Name = "ModeHint"
-	modeHint.Size = UDim2.new(1, -24, 0, 24)
-	modeHint.Position = UDim2.new(0, 12, 0, 74)
-	modeHint.BackgroundTransparency = 1
-	modeHint.Text = "Click to shoot. Change mode below."
-	modeHint.TextColor3 = Color3.fromRGB(130, 145, 180)
-	modeHint.Font = Enum.Font.Gotham
-	modeHint.TextSize = 10
-	modeHint.TextXAlignment = Enum.TextXAlignment.Left
-	modeHint.Parent = mainFrame
-
-	local buttons = {}
-	local buttonOrder = {
-		{ "shootParts", "Parts" },
-		{ "shootNuke", "Nuke" },
-		{ "shootMagnet", "Magnet" },
-		{ "shootForceField", "ForceField" },
-		{ "shootFlinger", "Flinger" },
-		{ "shootSpin", "Spin" },
-		{ "shootTrap", "Trap" },
-		{ "shootSpawn", "Spawn" },
-		{ "shootVehicle", "Vehicle" },
-		{ "shootHouse", "House" },
-		{ "shootSmoke", "Smoke" },
-		{ "shootNormal", "Normal" },
-		{ "shootGhost", "Ghost" },
-		{ "shootResize", "Resize" },
-		{ "shootTroll", "Troll" },
-		{ "shootTeleport", "Teleport" },
-		{ "shootBlackHole", "BlackHole" },
-		{ "shootHeavy", "Heavy" },
-		{ "shootLaunch", "Launch" },
-		{ "shootBounce", "Bounce" },
-		{ "shootExplode", "Explode" },
-		{ "shootDrop", "Drop" },
-		{ "shootBomb", "Bomb" },
-		{ "shootCrash", "Crash" },
-		{ "shootTime", "Time" },
-		{ "shootFire", "Fire" },
-		{ "shootFreeze", "Freeze" },
-		{ "shootTornado", "Tornado" },
-		{ "shootLightning", "Lightning" },
-		{ "shootFlood", "Flood" },
-		{ "shootGravity", "Gravity" },
-		{ "shootSlide", "Slide" },
-		{ "shootInvisible", "Invisible" },
-		{ "shootUnanchored", "Unanchored" },
-		{ "shootBigHead", "BigHead" },
-		{ "shootButterFly", "ButterFly" },
-		{ "shootPlant", "Plant" },
-		{ "shootWater", "Water" },
-		{ "shootMeteor", "Meteor" },
-		{ "shootStun", "Stun" },
-		{ "shootSound", "Sound" },
+	return {
+		lib = windUi,
+		window = window,
+		screenGui = windUi.ScreenGui,
 	}
-
-	local modeScroll = Instance.new("ScrollingFrame")
-	modeScroll.Name = "ModeScroll"
-	modeScroll.Size = UDim2.new(1, -24, 1, -170)
-	modeScroll.Position = UDim2.new(0, 12, 0, 110)
-	modeScroll.BackgroundTransparency = 1
-	modeScroll.BorderSizePixel = 0
-	modeScroll.ScrollBarThickness = 4
-	modeScroll.ScrollBarImageColor3 = Color3.fromRGB(0, 160, 220)
-	modeScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-	modeScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	modeScroll.ScrollingDirection = Enum.ScrollingDirection.Y
-	modeScroll.Active = true
-	modeScroll.Parent = mainFrame
-
-	local grid = Instance.new("UIGridLayout")
-	grid.Name = "ModeGrid"
-	grid.CellSize = UDim2.new(0, 96, 0, 30)
-	grid.CellPadding = UDim2.new(0, 8, 0, 8)
-	grid.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	grid.SortOrder = Enum.SortOrder.LayoutOrder
-	grid.Parent = modeScroll
-
-	for i, buttonDef in ipairs(buttonOrder) do
-		local modeName = buttonDef[1]
-		local label = buttonDef[2]
-		local button = Instance.new("TextButton")
-		button.Name = modeName
-		button.Size = UDim2.new(0, 96, 0, 30)
-		button.BackgroundColor3 = Color3.fromRGB(32, 36, 58)
-		button.BorderSizePixel = 0
-		button.Text = label
-		button.TextColor3 = Color3.fromRGB(200, 210, 240)
-		button.Font = Enum.Font.Gotham
-		button.TextSize = 11
-		button.Active = true
-		button.Parent = modeScroll
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 4)
-		corner.Parent = button
-
-		button.MouseButton1Click:Connect(function()
-			for mode, _ in pairs(MODE_CONFIG) do
-				MODE_CONFIG[mode] = false
-			end
-			MODE_CONFIG[modeName] = true
-			statusLabel.Text = "Status: " .. label .. " mode selected"
-			for _, otherButton in ipairs(buttons) do
-				otherButton.BackgroundColor3 = Color3.fromRGB(32, 36, 58)
-			end
-			button.BackgroundColor3 = Color3.fromRGB(0, 160, 220)
-		end)
-
-		table.insert(buttons, button)
-	end
-
-	-- Highlight the default mode
-	if buttons[1] then
-		buttons[1].BackgroundColor3 = Color3.fromRGB(0, 160, 220)
-	end
-
-	local shootButton = Instance.new("TextButton")
-	shootButton.Name = "ShootButton"
-	shootButton.Size = UDim2.new(1, -24, 0, 40)
-	shootButton.Position = UDim2.new(0, 12, 1, -52)
-	shootButton.BackgroundColor3 = Color3.fromRGB(0, 200, 160)
-	shootButton.BorderSizePixel = 0
-	shootButton.Text = "SHOOT"
-	shootButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-	shootButton.Font = Enum.Font.GothamBold
-	shootButton.TextSize = 13
-	shootButton.Active = true
-	shootButton.Parent = mainFrame
-
-	local shootCorner = Instance.new("UICorner")
-	shootCorner.CornerRadius = UDim.new(0, 6)
-	shootCorner.Parent = shootButton
-
-	shootButton.MouseButton1Click:Connect(function()
-		firePrimary()
-	end)
-
-	shootButton.MouseEnter:Connect(function()
-		createTween(shootButton, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(0, 230, 180) }):Play()
-	end)
-	shootButton.MouseLeave:Connect(function()
-		createTween(shootButton, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(0, 200, 160) }):Play()
-	end)
-
-	return screenGui
 end
 
 -- ===========================================================================
 -- 13. Error boundary
 -- ===========================================================================
-local success, screenGui = pcall(createInterface)
-if not success then
-	warn("GrowBlox UI initialization failed: " .. tostring(screenGui))
+local uiOk, uiHandle = pcall(createInterface)
+if not uiOk then
+	warn("GrowBlox UI initialization failed: " .. tostring(uiHandle))
 end
 
 local function onInputBegan(input, gameProcessed)
@@ -1157,16 +1051,7 @@ end)
 -- ===========================================================================
 _G.GrowBlox = {
 	fire = firePrimary,
-	setMode = function(modeName)
-		if MODE_CONFIG[modeName] == nil then
-			return false, "unknown mode"
-		end
-		for mode in pairs(MODE_CONFIG) do
-			MODE_CONFIG[mode] = false
-		end
-		MODE_CONFIG[modeName] = true
-		return true
-	end,
+	setMode = applyMode,
 	getActiveMode = function()
 		for mode, enabled in pairs(MODE_CONFIG) do
 			if enabled then
@@ -1176,10 +1061,12 @@ _G.GrowBlox = {
 		return nil
 	end,
 	getUi = function()
-		return screenGui
+		return uiHandle and uiHandle.screenGui
 	end,
 	destroy = function()
-		safeDestroy(screenGui)
+		if uiHandle and uiHandle.window and uiHandle.window.Destroy then
+			pcall(uiHandle.window.Destroy, uiHandle.window)
+		end
 		_G.HipHub_GrowBlox_Running = nil
 		_G.GrowBlox = nil
 	end,
