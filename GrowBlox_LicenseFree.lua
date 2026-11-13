@@ -333,6 +333,60 @@ local function getPlayerTile()
 	return math.floor(s.x + 0.5), math.floor(s.y - 0.475 + 0.5)
 end
 
+-- ===========================================================================
+-- 3b. Gerakan karakter via input internal game
+-- ===========================================================================
+-- Game Growblox membaca input keyboard/UI internal, bukan Humanoid.
+-- Kita coba dua cara:
+--   1) ContextActionService / VirtualInputManager
+--   2) Langsung ubah state (x/y) jika memungkinkan (biasanya read-only)
+local VirtualInputManager = nil
+pcall(function() VirtualInputManager = game:GetService("VirtualInputManager") end)
+local ContextActionService = nil
+pcall(function() ContextActionService = game:GetService("ContextActionService") end)
+
+local function keyDown(key)
+	if VirtualInputManager then
+		pcall(function()
+			VirtualInputManager:SendKeyEvent(true, key, false, nil)
+		end)
+	end
+end
+
+local function keyUp(key)
+	if VirtualInputManager then
+		pcall(function()
+			VirtualInputManager:SendKeyEvent(false, key, false, nil)
+		end)
+	end
+end
+
+local function moveLeft()
+	keyDown(Enum.KeyCode.A)
+	keyDown(Enum.KeyCode.Left)
+end
+
+local function moveRight()
+	keyDown(Enum.KeyCode.D)
+	keyDown(Enum.KeyCode.Right)
+end
+
+local function moveJump()
+	keyDown(Enum.KeyCode.Space)
+	keyDown(Enum.KeyCode.W)
+	keyDown(Enum.KeyCode.Up)
+end
+
+local function moveStop()
+	keyUp(Enum.KeyCode.A)
+	keyUp(Enum.KeyCode.D)
+	keyUp(Enum.KeyCode.Left)
+	keyUp(Enum.KeyCode.Right)
+	keyUp(Enum.KeyCode.Space)
+	keyUp(Enum.KeyCode.W)
+	keyUp(Enum.KeyCode.Up)
+end
+
 local function invCount(id)
 	if not Refs.Inv then return 0 end
 	for _, slot in ipairs(Refs.Inv.slots or {}) do
@@ -341,6 +395,21 @@ local function invCount(id)
 		end
 	end
 	return 0
+end
+
+-- Tampilkan isi inventory di console (untuk debug)
+local function debugInventory()
+	if not Refs.Inv then
+		print("[GrowBlox] Inventory: TIDAK ADA")
+		return
+	end
+	local slots = Refs.Inv.slots or {}
+	print("[GrowBlox] Inventory slots=" .. tostring(#slots))
+	for i, slot in ipairs(slots) do
+		if type(slot) == "table" then
+			print("[GrowBlox]   slot" .. i .. " id=" .. tostring(slot.id) .. " n=" .. tostring(slot.n))
+		end
+	end
 end
 
 local function invRemove(id, n)
@@ -523,10 +592,30 @@ local function autoPlantOnce()
 	if not target then
 		return false, "no empty tile near " .. px .. "," .. py
 	end
-	if invCount(CONFIG.plantId) <= 0 then return false, "no seed" end
+	if invCount(CONFIG.plantId) <= 0 then
+		-- Coba cari seed lain yang available (fallback)
+		local anySeed = nil
+		if Refs.Inv then
+			for _, slot in ipairs(Refs.Inv.slots or {}) do
+				if type(slot) == "table" and (slot.n or 0) > 0 then
+					-- Anggap item yang namanya mengandung "seed" di ItemDB
+					if ItemDB and ItemDB[slot.id] and tostring(ItemDB[slot.id].name):lower():find("seed") then
+						anySeed = slot.id
+						break
+					end
+				end
+			end
+		end
+		if anySeed then
+			CONFIG.plantId = anySeed
+			print("[GrowBlox] Mengganti plantId ke seed id=" .. tostring(anySeed))
+		else
+			return false, "no seed"
+		end
+	end
 	local ok = placeTile("fg", target.x, target.y, CONFIG.plantId)
 	if ok then
-		return true, "plant " .. target.x .. "," .. target.y
+		return true, "plant " .. target.x .. "," .. target.y .. " seed=" .. tostring(CONFIG.plantId)
 	end
 	return false, "plant failed"
 end
@@ -633,6 +722,23 @@ local function notify(title, text, duration)
 	end)
 end
 
+-- Tombol debug: pindah kiri/kanan/lompat + cek inventory
+local function debugMove(direction)
+	if direction == "left" then
+		moveLeft()
+		task.wait(0.15)
+		moveStop()
+	elseif direction == "right" then
+		moveRight()
+		task.wait(0.15)
+		moveStop()
+	elseif direction == "jump" then
+		moveJump()
+		task.wait(0.15)
+		moveStop()
+	end
+end
+
 local ui = {}
 
 local function createGui()
@@ -652,8 +758,8 @@ local function createGui()
 
 	-- Frame utama (kolom tombol)
 	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(0, 180, 0, 210)
-	frame.Position = UDim2.new(0.5, -90, 1, -214)
+	frame.Size = UDim2.new(0, 180, 0, 236)
+	frame.Position = UDim2.new(0.5, -90, 1, -240)
 	frame.AnchorPoint = Vector2.new(0.5, 1)
 	frame.BackgroundColor3 = Color3.fromRGB(15, 18, 32)
 	frame.BorderSizePixel = 0
@@ -694,7 +800,7 @@ local function createGui()
 	local visible = true
 	local function setVisible(v)
 		visible = v
-		frame.Size = v and UDim2.new(0, 180, 0, 210) or UDim2.new(0, 70, 0, 28)
+		frame.Size = v and UDim2.new(0, 180, 0, 236) or UDim2.new(0, 70, 0, 28)
 		for _, child in ipairs(frame:GetChildren()) do
 			if child ~= title and child ~= hideBtn and child:IsA("GuiObject") then
 				child.Visible = v
@@ -751,6 +857,33 @@ local function createGui()
 	local gridCorner = Instance.new("UICorner")
 	gridCorner.CornerRadius = UDim.new(0, 5)
 	gridCorner.Parent = gridBtn
+
+	-- Tombol gerak debug
+	local function addMoveButton(label, x, action)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0, 42, 0, 24)
+		btn.Position = UDim2.new(0, x, 0, 200)
+		btn.BackgroundColor3 = Color3.fromRGB(60, 70, 100)
+		btn.BorderSizePixel = 0
+		btn.Text = label
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 10
+		btn.Parent = frame
+
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, 4)
+		c.Parent = btn
+
+		btn.MouseButton1Click:Connect(function()
+			action()
+		end)
+	end
+
+	addMoveButton("<", 8, function() debugMove("left") end)
+	addMoveButton(">", 56, function() debugMove("right") end)
+	addMoveButton("^", 104, function() debugMove("jump") end)
+	addMoveButton("INV", 152, function() debugInventory() end)
 
 	-- =====================================================================
 	-- Panel Grid PNB (5x5) terpisah, bisa digeser
