@@ -290,16 +290,19 @@ local function tileAt(layer, x, y)
 	if not w then return nil end
 	local grid = w[layer]
 	if not grid then return nil end
+
 	-- Coba akses sebagai [y][x]
 	local row = grid[y]
 	if type(row) == "table" then
 		return row[x] or 0
 	end
-	-- Fallback: flat array [y * width + x]? coba indeks umum
-	local ww = rawget(w, "w") or rawget(w, "width")
-	if type(ww) == "number" and ww > 0 then
-		return grid[(y * ww) + x] or 0
+
+	-- Fallback: [x][y] (beberapa game memakai urutan terbalik)
+	row = grid[x]
+	if type(row) == "table" then
+		return row[y] or 0
 	end
+
 	return 0
 end
 
@@ -599,6 +602,29 @@ end
 task.spawn(function()
 	task.wait(2)
 	debugGrid()
+end)
+
+-- Juga cetak status playerState + jumlah tile terdeteksi
+task.spawn(function()
+	task.wait(3)
+	local s = playerState()
+	if s then
+		print(string.format("[GrowBlox] state: x=%.2f y=%.2f grounded=%s facing=%s",
+			s.x, s.y, tostring(s.grounded), tostring(s.facing)))
+	else
+		print("[GrowBlox] state: TIDAK ADA")
+	end
+	local px, py = getPlayerTile()
+	if px then
+		local tiles = tilesAround(px, py, CONFIG.range)
+		print("[GrowBlox] tilesAround count=" .. tostring(#tiles))
+		for i = 1, math.min(10, #tiles) do
+			local t = tiles[i]
+			print(string.format("[GrowBlox]   tile %d: x=%d y=%d fg=%s", i, t.x, t.y, tostring(t.fg)))
+		end
+	else
+		print("[GrowBlox] playerTile: TIDAK ADA")
+	end
 end)
 
 local function autoPlantOnce()
