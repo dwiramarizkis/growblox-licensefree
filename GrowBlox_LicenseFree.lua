@@ -36,24 +36,48 @@ end
 
 print("[GrowBlox] executor: getgc=" .. tostring(getgc ~= nil) .. " getconstants=" .. tostring(getconsts ~= nil))
 
--- Modul game (sama seperti k.lua)
-local Shared = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared")
-local WorldRemotes = ReplicatedStorage:FindFirstChild("WorldRemotes") or ReplicatedStorage:WaitForChild("WorldRemotes")
+-- Modul game (fallback aman; tidak pakai WaitForChild yang bisa infinite yield)
+local Shared = ReplicatedStorage:FindFirstChild("Shared")
+local WorldRemotes = ReplicatedStorage:FindFirstChild("WorldRemotes")
 local SetTileRemote = WorldRemotes and WorldRemotes:FindFirstChild("SetTile")
 
 local ItemDB = nil
 local InventoryModule = nil
 local NetOk, Net = false, nil
 
-pcall(function()
-	ItemDB = require(Shared:FindFirstChild("ItemDB") or Shared.ItemDB)
-end)
-pcall(function()
-	InventoryModule = require(Shared:FindFirstChild("Inventory") or Shared.Inventory)
-end)
-pcall(function()
-	NetOk, Net = pcall(require, Shared:FindFirstChild("Net") or Shared.Net)
-end)
+if Shared then
+	pcall(function()
+		ItemDB = require(Shared:FindFirstChild("ItemDB"))
+	end)
+	pcall(function()
+		InventoryModule = require(Shared:FindFirstChild("Inventory"))
+	end)
+	pcall(function()
+		NetOk, Net = pcall(require, Shared:FindFirstChild("Net"))
+	end)
+end
+
+-- Kalau Shared belum ada, coba sekali dengan timeout 10 detik
+if not Shared then
+	local waited = 0
+	while waited < 10 do
+		Shared = ReplicatedStorage:FindFirstChild("Shared")
+		if Shared then break end
+		task.wait(0.5)
+		waited += 0.5
+	end
+	if Shared then
+		pcall(function()
+			ItemDB = require(Shared:FindFirstChild("ItemDB"))
+		end)
+		pcall(function()
+			InventoryModule = require(Shared:FindFirstChild("Inventory"))
+		end)
+		pcall(function()
+			NetOk, Net = pcall(require, Shared:FindFirstChild("Net"))
+		end)
+	end
+end
 
 -- ===========================================================================
 -- 1. Konfigurasi
