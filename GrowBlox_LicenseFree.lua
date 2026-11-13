@@ -488,7 +488,8 @@ local function tryPlace(x, y, id)
 	if not id or invCount(id) <= 0 then return "habis" end
 	-- JANGAN cek tile kosong dulu; biarkan server yang memutuskan.
 	if not sendSetTile("fg", x, y, id) then return nil end
-	invRemove(id, 1) -- persis k.lua
+	-- JANGAN invRemove manual di sini. Server yang mengurangi inventory.
+	-- (Kalau server menolak, inventory tidak berubah.)
 	return "place"
 end
 
