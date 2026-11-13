@@ -293,10 +293,16 @@ end
 
 local function invCount(id)
 	if not Refs.Inv then return 0 end
-	if type(Refs.Inv.count) == "function" then
-		local ok, n = pcall(function() return Refs.Inv:count(id) end)
-		if ok then return n end
+	-- Coba method count
+	local cnt = rawget(Refs.Inv, "count")
+	if type(cnt) == "function" then
+		local ok, n = pcall(cnt, Refs.Inv, id)
+		if ok and type(n) == "number" then return n end
+		-- fallback: count tanpa self
+		local ok2, n2 = pcall(cnt, id)
+		if ok2 and type(n2) == "number" then return n2 end
 	end
+	-- Fallback: cari di slots
 	for _, slot in ipairs(Refs.Inv.slots or {}) do
 		if type(slot) == "table" and slot.id == id then
 			return slot.n or 0
@@ -306,9 +312,13 @@ local function invCount(id)
 end
 
 local function invRemove(id, n)
-	if not Refs.Inv or type(Refs.Inv.remove) ~= "function" then return false end
-	local ok = pcall(function() Refs.Inv:remove(id, n or 1) end)
-	return ok
+	if not Refs.Inv then return false end
+	local rm = rawget(Refs.Inv, "remove")
+	if type(rm) ~= "function" then return false end
+	local ok = pcall(rm, Refs.Inv, id, n or 1)
+	if ok then return true end
+	-- fallback: tanpa self
+	return pcall(rm, id, n or 1)
 end
 
 local function breakable(id)
