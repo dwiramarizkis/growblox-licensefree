@@ -29,8 +29,11 @@ end
 
 local getgc = globalFn("getgc")
 local getconsts = globalFn("getconstants") or (type(debug) == "table" and debug.getconstants) or nil
+local getupvalue = globalFn("getupvalue") or (type(debug) == "table" and debug.getupvalue) or nil
+local hookfunction = globalFn("hookfunction")
+local newcclosure = globalFn("newcclosure")
 
-print("[GrowBlox] executor: getgc=" .. tostring(getgc ~= nil) .. " getconstants=" .. tostring(getconsts ~= nil))
+print("[GrowBlox] executor: getgc=" .. tostring(getgc ~= nil) .. " getconstants=" .. tostring(getconsts ~= nil) .. " getupvalue=" .. tostring(getupvalue ~= nil))
 
 -- ===========================================================================
 -- Konfigurasi
@@ -97,6 +100,11 @@ local Refs = {
 	Inv = nil,
 	SetTile = nil,
 	Punch = nil,
+	Input = nil,
+	InputFn = nil,
+	RbxNet = nil,   -- instance RemoteEvent (ByteNetReliable)
+	FireServer = nil, -- fungsi pengirim asli
+	IsReliable = false,
 }
 
 local function isWorldTbl(v)
@@ -150,12 +158,42 @@ local function isSetTileFn(fn)
 	return hasConsts(fn, "tileChanged", "layer", "flip")
 end
 
+local function isSendFn(fn)
+	-- Kandidat fungsi "send" dari modul ByteNet/netscope.
+	if not getconsts then return false end
+	local c = fnConsts(fn)
+	if not c then return false end
+	local hasReliable, hasByte, hasPacked = false, false, false
+	for _, v in pairs(c) do
+		if type(v) == "string" then
+			if v == "reliable" or v == "unreliable" then hasReliable = true
+			elseif v == "byte" or v == "Byte" or v == "packed" then hasByte = true end
+		end
+	end
+	return hasReliable and hasByte and hasConsts(fn, "send", "recv")
+end
+
+local function isByteNetSendFn(fn)
+	-- Fungsi wrapper ByteNet yang memegang RemoteEvent upvalue.
+	if not getconsts then return false end
+	local c = fnConsts(fn)
+	if not c then return false end
+	local hasReliable = false
+	for _, v in pairs(c) do
+		if v == "reliable" then hasReliable = true break end
+	end
+	if not hasReliable then return false end
+	return true
+end
+
 local function isPunchFn(fn)
 	if not getconsts then return false end
 	if hasConsts(fn, "Empty the Vending Machine first!", "newCrack")
 		or hasConsts(fn, "Empty the Vending Machine first!", "HarvestProvider")
 		or hasConsts(fn, "punchEvent", "punch_miss")
-		or hasConsts(fn, "punchCount", "Punch", "punchFx") then
+		or hasConsts(fn, "punchCount", "Punch", "punchFx")
+		or hasConsts(fn, "punchEvent", "punch_start")
+		or hasConsts(fn, "punch_start", "punch_miss") then
 		return true
 	end
 	return false
@@ -201,19 +239,64 @@ local function scanRefs()
 		elseif type(v) == "function" then
 			if isSetTileFn(v) then settileSeen[#settileSeen + 1] = v end
 			if isPunchFn(v) then punchSeen[#punchSeen + 1] = v end
+			if not Refs.FireServer and getupvalue and isByteNetSendFn(v) then
+				-- Cari fungsi send ByteNet yang memegang RemoteEvent upvalue.
+				pcall(function()
+					for i = 1, 8 do
+						local okU, _, uv = pcall(getupvalue, v, i)
+						if okU and typeof(uv) == "Instance" and (uv:IsA("RemoteEvent") or uv:IsA("RemoteFunction")) then
+							Refs.FireServer = uv.FireServer
+							Refs.RbxNet = uv
+							Refs.IsReliable = hasConsts(v, "reliable")
+							break
+						end
+					end
+				end)
+			end
 		end
 	end
 	Refs.SetTile = settileSeen[1]
 	Refs.Punch = punchSeen[1]
-	print(string.format("[GrowBlox] refs: world=%s state=%s inv=%s settile=%s punch=%s (setcand=%d punchcand=%d)",
+	print(string.format("[GrowBlox] refs: world=%s state=%s inv=%s settile=%s punch=%s setcand=%d punchcand=%d bytenet=%s",
 		tostring(Refs.World ~= nil),
 		tostring(Refs.State ~= nil),
 		tostring(Refs.Inv ~= nil),
 		tostring(Refs.SetTile ~= nil),
 		tostring(Refs.Punch ~= nil),
 		#settileSeen,
-		#punchSeen))
+		#punchSeen,
+		Refs.RbxNet and Refs.RbxNet:GetFullName() or "TIDAK"))
 	return Refs.World ~= nil
+end
+
+local function scanInputRefs()
+	-- Fallback bila hook modul WorldMenu tidak ditemukan.
+	-- Cari fungsi isDown di getgc yang membaca konstanta keyLeft/keyRight.
+	if not getgc then return false end
+	local ok, all = pcall(getgc, true)
+	if not ok or type(all) ~= "table" then return false end
+	local candidates = {}
+	for _, v in ipairs(all) do
+		if type(v) == "function" then
+			local c = fnConsts(v)
+			if c then
+				local hasLeft, hasRight = false, false
+				for _, k in pairs(c) do
+					if k == "keyLeft" then hasLeft = true end
+					if k == "keyRight" then hasRight = true end
+				end
+				if hasLeft and hasRight then
+					candidates[#candidates + 1] = v
+				end
+			end
+		end
+	end
+	if #candidates > 0 then
+		Refs.InputFn = candidates[1]
+		print("[GrowBlox] input fallback: " .. tostring(#candidates) .. " kandidat isDown via getgc")
+		return true
+	end
+	return false
 end
 
 local refsOk = scanRefs()
@@ -224,6 +307,8 @@ if not refsOk then
 end
 if not Refs.World then
 	print("[GrowBlox] FATAL: world tidak ditemukan. Pastikan sudah masuk world.")
+else
+	scanInputRefs()
 end
 
 -- ===========================================================================
@@ -237,26 +322,82 @@ local ItemDB = nil
 local InventoryModule = nil
 local NetOk, Net = false, nil
 
+-- Cari Net (ByteNet) secara rekursif di ReplicatedStorage, tidak hanya di folder "Shared".
+local function findModule(parent, name, depth)
+	depth = depth or 0
+	if depth > 4 then return nil end
+	for _, child in ipairs(parent:GetChildren()) do
+		if child:IsA("ModuleScript") and child.Name == name then
+			return child
+		end
+		if child:IsA("Folder") or child:IsA("Configuration") or child:IsA("Model") then
+			local found = findModule(child, name, depth + 1)
+			if found then return found end
+		end
+	end
+	return nil
+end
+
+if not Shared then
+	Shared = findModule(ReplicatedStorage, "Shared")
+end
+
 if Shared then
 	pcall(function() ItemDB = require(Shared:FindFirstChild("ItemDB")) end)
 	pcall(function() InventoryModule = require(Shared:FindFirstChild("Inventory")) end)
 	pcall(function() NetOk, Net = pcall(require, Shared:FindFirstChild("Net")) end)
-else
-	-- Cari folder shared di ReplicatedStorage dengan polling
-	for _, child in ipairs(ReplicatedStorage:GetChildren()) do
-		pcall(function()
-			local net = child:FindFirstChild("Net")
-			if net then
-				NetOk, Net = pcall(require, net)
-			end
-		end)
-		pcall(function()
-			local itemdb = child:FindFirstChild("ItemDB")
-			if itemdb then
-				ItemDB = require(itemdb)
-			end
-		end)
+end
+
+if not NetOk then
+	-- Cari module Net (ByteNet) di mana pun di ReplicatedStorage.
+	local netMod = findModule(ReplicatedStorage, "Net")
+	if netMod then
+		NetOk, Net = pcall(require, netMod)
 	end
+end
+
+if not NetOk then
+	-- Cari module yang punya method tile.send di dalamnya (ByteNet umum).
+	pcall(function()
+		for _, child in ipairs(ReplicatedStorage:GetDescendants()) do
+			if NetOk then break end
+			if child:IsA("ModuleScript") then
+				pcall(function()
+					local mod = require(child)
+					if type(mod) == "table" and type(mod.tile) == "table" and type(mod.tile.send) == "function" then
+						NetOk, Net = true, mod
+					end
+				end)
+			end
+		end
+	end)
+end
+
+-- Cari RemoteEvent SetTile secara rekursif, fallback kalau bukan di WorldRemotes.
+local function findRemote(parent, name, depth)
+	depth = depth or 0
+	if depth > 4 then return nil end
+	for _, child in ipairs(parent:GetChildren()) do
+		if (child:IsA("RemoteEvent") or child:IsA("RemoteFunction")) and child.Name == name then
+			return child
+		end
+		if child:IsA("Folder") or child:IsA("Configuration") or child:IsA("Model") then
+			local found = findRemote(child, name, depth + 1)
+			if found then return found end
+		end
+	end
+	return nil
+end
+if not SetTileRemote then
+	SetTileRemote = findRemote(ReplicatedStorage, "SetTile")
+end
+
+-- Fallback terakhir: pakai ByteNetReliable yang terdeteksi dari scan GC.
+-- Remote ini dipakai game yang memakai ByteNet RbxNet (nama acak). Kita kirim
+-- packet dengan format: layer (1/2), x, y, id, flip=false.
+if not SetTileRemote and Refs.RbxNet then
+	SetTileRemote = Refs.RbxNet
+	print("[GrowBlox] SetTileRemote fallback ke ByteNetReliable: " .. Refs.RbxNet:GetFullName())
 end
 
 print("[GrowBlox] NetOk=" .. tostring(NetOk) .. " Shared=" .. tostring(Shared ~= nil) .. " SetTileRemote=" .. tostring(SetTileRemote ~= nil))
@@ -264,14 +405,37 @@ print("[GrowBlox] NetOk=" .. tostring(NetOk) .. " Shared=" .. tostring(Shared ~=
 -- WorldMenu module untuk hook gerakan (k.lua)
 local MenuModule = nil
 local MenuModOk = false
+
+-- Cari ModuleScript yang punya fungsi isDown di PlayerGui (bukan cuma GameGui/WorldMenu).
+local function hasFn(mod, name)
+	if type(mod) ~= "table" then return false end
+	return type(rawget(mod, name)) == "function" or type(mod[name]) == "function"
+end
+
 pcall(function()
-	local GameGui = PlayerGui:FindFirstChild("GameGui") or PlayerGui:WaitForChild("GameGui", 5)
-	if GameGui then
-		local wm = GameGui:FindFirstChild("WorldMenu")
-		if wm and wm:IsA("ModuleScript") then
-			MenuModOk, MenuModule = pcall(require, wm)
+	local function tryRequire(ms)
+		if MenuModOk then return end
+		local ok, mod = pcall(require, ms)
+		if ok and type(mod) == "table" and hasFn(mod, "isDown") then
+			MenuModule = mod
+			MenuModOk = true
 		end
 	end
+
+	local function walkGui(parent, depth)
+		if depth > 6 then return end
+		for _, child in ipairs(parent:GetChildren()) do
+			if MenuModOk then return end
+			if child:IsA("ModuleScript") then
+				tryRequire(child)
+			end
+			if child:IsA("Folder") or child:IsA("Frame") or child:IsA("ScreenGui")
+				or child:IsA("ScrollingFrame") or child:IsA("Model") then
+				walkGui(child, depth + 1)
+			end
+		end
+	end
+	walkGui(PlayerGui, 0)
 end)
 
 -- ===========================================================================
@@ -294,6 +458,11 @@ if MenuModOk and type(MenuModule) == "table" and type(rawget(MenuModule, "isDown
 	OrigIsDown = rawget(MenuModule, "isDown")
 	MenuModule.isDown = isDownWrapper
 	print("[GrowBlox] WorldMenu.isDown hooked")
+elseif Refs.InputFn then
+	-- Fallback: pakai fungsi isDown dari getgc. AutoInput membaca wrapper
+	-- dengan memanggil Refs.InputFn yang sudah diganti lewat hook manual.
+	OrigIsDown = Refs.InputFn
+	print("[GrowBlox] Input fallback isDown (getgc) dipakai")
 else
 	print("[GrowBlox] WorldMenu.isDown TIDAK ditemukan, gerakan auto mati")
 end
@@ -504,7 +673,13 @@ local function sendSetTile(layer, x, y, id)
 	end
 
 	if SetTileRemote then
-		local ok = pcall(function() SetTileRemote:FireServer(layer, x, y, id, false) end)
+		local ok
+		if Refs.RbxNet and SetTileRemote == Refs.RbxNet and Refs.FireServer then
+			-- ByteNet: layer 1=fg, 2=bg; parameter terakhir flips.
+			ok = pcall(Refs.FireServer, SetTileRemote, (layer == "bg") and 2 or 1, x, y, id, false)
+		else
+			ok = pcall(function() SetTileRemote:FireServer(layer, x, y, id, false) end)
+		end
 		if ok then return true end
 		warn("[GrowBlox] SetTileRemote gagal")
 	end
@@ -520,12 +695,27 @@ local function sendSetTile(layer, x, y, id)
 	return false
 end
 
+-- Cek apakah tile fg kosong (bisa ditempati). 0, "", "0", nil dianggap kosong.
+local function isFgEmpty(fg)
+	return fg == nil or fg == 0 or fg == "" or fg == "0" or fg == false
+end
+
 local function tryPlace(x, y, id)
 	if not id then return "habis" end
+	-- Jangan menimpa tile yang sudah terisi (server akan tolak, visual akan menyesatkan).
+	local fg = fgIdAt(x, y)
+	if fg ~= nil and not isFgEmpty(fg) then
+		return "occupied"
+	end
 	local count = invCount(id)
 	print("[GrowBlox] tryPlace id=" .. tostring(id) .. " count=" .. tostring(count))
 	if count <= 0 then return "habis" end
 	if not sendSetTile("fg", x, y, id) then return nil end
+	-- Kurangi inventory hanya jika lewat jalur server-authoritative (Net/Remote),
+	-- supaya visual fallback tidak membuat inventory "berkurang" tanpa tile benar-benar terpasang.
+	if NetOk or SetTileRemote then
+		invRemove(id, 1)
+	end
 	return "place"
 end
 
@@ -708,6 +898,12 @@ local function autoBreakOnce()
 	local tx = px + facing
 	local ty = py
 
+	-- Cek tile target; kalau kosong/tidak ada, tidak perlu punch.
+	local fg = fgIdAt(tx, ty)
+	if fg ~= nil and isFgEmpty(fg) then
+		return false, "empty " .. tx .. "," .. ty
+	end
+
 	local key = tx .. "," .. ty
 	local now = os.clock()
 	if lastPunch[key] and (now - lastPunch[key]) < CONFIG.punchCooldown then
@@ -775,6 +971,12 @@ local function autoPlantOnce()
 	local tx = px + facing
 	local ty = py
 
+	-- Cek tile target; jangan menanam kalau sudah terisi.
+	local fg = fgIdAt(tx, ty)
+	if fg ~= nil and not isFgEmpty(fg) then
+		return false, "occupied " .. tx .. "," .. ty
+	end
+
 	local r = tryPlace(tx, ty, CONFIG.plantId)
 	if r == "place" then
 		return true, "plant " .. tx .. "," .. ty
@@ -791,6 +993,12 @@ local function autoPlaceOnce()
 	local facing = (s and s.facing) or 1
 	local tx = px + facing
 	local ty = py
+
+	-- Cek tile target; jangan menimpa tile terisi.
+	local fg = fgIdAt(tx, ty)
+	if fg ~= nil and not isFgEmpty(fg) then
+		return false, "occupied " .. tx .. "," .. ty
+	end
 
 	local r = tryPlace(tx, ty, CONFIG.placeId)
 	if r == "place" then
@@ -827,7 +1035,7 @@ local function pnbTick()
 				if r == "hit" or r == "broke" then
 					return true, "pnb break " .. t.x .. "," .. t.y
 				end
-			elseif (t.fg == 0 or t.fg == "" or t.fg == nil) and CONFIG.pnbPlaceEmpty then
+			elseif isFgEmpty(t.fg) and CONFIG.pnbPlaceEmpty then
 				local r = tryPlace(t.x, t.y, CONFIG.placeId)
 				if r == "place" then
 					return true, "pnb place " .. t.x .. "," .. t.y
