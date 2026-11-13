@@ -43,6 +43,8 @@ local CONFIG = {
 
 	placeId = 2,        -- Dirt (block)
 	plantId = 3,        -- Dirt Seed
+	sugarcaneId = 954,  -- Sugar Cane
+	sugarcaneSeedId = 955, -- Sugar Cane Seed
 
 	range = 4,
 	interval = 0.25,
@@ -55,6 +57,32 @@ local CONFIG = {
 	pnbInterval = 0.15,
 	pnbBreakOccupied = true,
 	pnbPlaceEmpty = true,
+
+	-- Item DB (id -> nama), untuk tampilan & pilihan
+	items = {
+		[2] = "Dirt",
+		[3] = "Dirt Seed",
+		[4] = "Lava",
+		[5] = "Lava Seed",
+		[10] = "Rock",
+		[11] = "Rock Seed",
+		[12] = "Door",
+		[14] = "Cave Background",
+		[15] = "Cave Background Seed",
+		[18] = "Fist",
+		[20] = "Sign",
+		[32] = "Wrench",
+		[100] = "Wood Block",
+		[242] = "World Lock",
+		[696] = "Torch",
+		[954] = "Sugar Cane",
+		[955] = "Sugar Cane Seed",
+	},
+
+	-- Blok yang dianggap "block" untuk Auto Place (bukan seed/tool)
+	blockIds = {
+		2, 10, 14, 100, 696, 20, 4, 12,
+	},
 }
 
 local selectedTiles = {} -- "x,y" -> true (absolut)
@@ -385,6 +413,18 @@ local function invCount(id)
 		end
 	end
 	return 0
+end
+
+-- Daftar item yang tersedia di inventory (id -> jumlah)
+local function invList()
+	local out = {}
+	if not Refs.Inv then return out end
+	for _, slot in ipairs(Refs.Inv.slots or {}) do
+		if type(slot) == "table" and type(slot.id) == "number" and (slot.n or 0) > 0 then
+			out[slot.id] = slot.n or 0
+		end
+	end
+	return out
 end
 
 local function invRemove(id, n)
@@ -855,8 +895,8 @@ local function createGui()
 	end)
 
 	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(0, 180, 0, 236)
-	frame.Position = UDim2.new(0.5, -90, 1, -240)
+	frame.Size = UDim2.new(0, 180, 0, 270)
+	frame.Position = UDim2.new(0.5, -90, 1, -274)
 	frame.AnchorPoint = Vector2.new(0.5, 1)
 	frame.BackgroundColor3 = Color3.fromRGB(15, 18, 32)
 	frame.BorderSizePixel = 0
@@ -897,7 +937,7 @@ local function createGui()
 	local visible = true
 	local function setVisible(v)
 		visible = v
-		frame.Size = v and UDim2.new(0, 180, 0, 236) or UDim2.new(0, 70, 0, 28)
+		frame.Size = v and UDim2.new(0, 180, 0, 296) or UDim2.new(0, 70, 0, 28)
 		for _, child in ipairs(frame:GetChildren()) do
 			if child ~= title and child ~= hideBtn and child:IsA("GuiObject") then
 				child.Visible = v
@@ -939,9 +979,58 @@ local function createGui()
 	addToggle("Auto Plant", "autoPlant", 98)
 	addToggle("PNB Grid", "pnbEnabled", 132)
 
+	-- Dropdown pilihan block & seed (siklus saat tombol diklik)
+	local function addDropdown(title, configKey, allowedIds, y)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, -16, 0, 30)
+		btn.Position = UDim2.new(0, 8, 0, y)
+		btn.BackgroundColor3 = Color3.fromRGB(25, 30, 50)
+		btn.BorderSizePixel = 0
+		btn.Text = title .. ": " .. (CONFIG.items[CONFIG[configKey]] or tostring(CONFIG[configKey]))
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 11
+		btn.AutoButtonColor = true
+		btn.Parent = frame
+
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, 5)
+		c.Parent = btn
+
+		btn.MouseButton1Click:Connect(function()
+			-- Siklus pilihan item yang tersedia
+			local avail = {}
+			for id, _ in pairs(CONFIG.items) do
+				-- hanya yang ada di inventory dan (allowedIds nil atau id termasuk allowed)
+				if invCount(id) > 0 and (not allowedIds or table.find(allowedIds, id)) then
+					avail[#avail + 1] = id
+				end
+			end
+			table.sort(avail)
+			if #avail == 0 then
+				notify(title, "Tidak ada item tersedia", 2)
+				return
+			end
+			local cur = CONFIG[configKey]
+			local nextId = avail[1]
+			for i, id in ipairs(avail) do
+				if id == cur then
+					nextId = avail[(i % #avail) + 1]
+					break
+				end
+			end
+			CONFIG[configKey] = nextId
+			btn.Text = title .. ": " .. (CONFIG.items[nextId] or tostring(nextId))
+			notify(title, CONFIG.items[nextId] or tostring(nextId), 1.5)
+		end)
+	end
+
+	addDropdown("Block to Put", "placeId", CONFIG.blockIds, 166)
+	addDropdown("Seed to Plant", "plantId", nil, 200)
+
 	local gridBtn = Instance.new("TextButton")
 	gridBtn.Size = UDim2.new(1, -16, 0, 30)
-	gridBtn.Position = UDim2.new(0, 8, 0, 166)
+	gridBtn.Position = UDim2.new(0, 8, 0, 234)
 	gridBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 220)
 	gridBtn.BorderSizePixel = 0
 	gridBtn.Text = "OPEN GRID PNB"
@@ -954,11 +1043,11 @@ local function createGui()
 	gridCorner.CornerRadius = UDim.new(0, 5)
 	gridCorner.Parent = gridBtn
 
-	-- Tombol debug
+	-- Tombol debug (dipindah ke bawah, tidak menutupi dropdown)
 	local function addMoveButton(label, x, action)
 		local btn = Instance.new("TextButton")
 		btn.Size = UDim2.new(0, 42, 0, 24)
-		btn.Position = UDim2.new(0, x, 0, 200)
+		btn.Position = UDim2.new(0, x, 0, 268)
 		btn.BackgroundColor3 = Color3.fromRGB(60, 70, 100)
 		btn.BorderSizePixel = 0
 		btn.Text = label
@@ -995,6 +1084,9 @@ local function createGui()
 		AutoInput.jump = false
 		AutoInput.active = false
 	end)
+
+	-- Perbesar frame sedikit untuk tombol bawah
+	frame.Size = UDim2.new(0, 180, 0, 296)
 
 	-- Panel grid PNB
 	local gridPanel = Instance.new("Frame")
