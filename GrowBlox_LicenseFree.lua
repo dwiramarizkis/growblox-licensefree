@@ -463,11 +463,7 @@ end
 -- Aksi dasar (persis k.lua)
 -- ===========================================================================
 local function sendSetTile(layer, x, y, id)
-	if Refs.SetTile then
-		local ok, err = pcall(Refs.SetTile, layer, x, y, id, false, false)
-		if ok then return true end
-		warn("[GrowBlox] setTile gagal: " .. tostring(err))
-	end
+	-- Utamakan jalur server-authoritative (ByteNet), bukan fungsi visual.
 	if NetOk and type(Net) == "table" and type(Net.tile) == "table" then
 		local ok = pcall(Net.tile.send, {
 			layer = (layer == "bg") and 2 or 1,
@@ -477,9 +473,22 @@ local function sendSetTile(layer, x, y, id)
 			flip = false,
 		})
 		if ok then return true end
-	elseif SetTileRemote then
-		pcall(function() SetTileRemote:FireServer(layer, x, y, id, false) end)
-		return true
+		warn("[GrowBlox] ByteNet tile send gagal")
+	end
+
+	if SetTileRemote then
+		local ok = pcall(function() SetTileRemote:FireServer(layer, x, y, id, false) end)
+		if ok then return true end
+		warn("[GrowBlox] SetTileRemote gagal")
+	end
+
+	if Refs.SetTile then
+		local ok, err = pcall(Refs.SetTile, layer, x, y, id, false, false)
+		if ok then
+			warn("[GrowBlox] WARNING: pakai SetTile visual (server mungkin tolak)")
+			return true
+		end
+		warn("[GrowBlox] setTile visual gagal: " .. tostring(err))
 	end
 	return false
 end
