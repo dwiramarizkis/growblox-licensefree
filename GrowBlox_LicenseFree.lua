@@ -297,7 +297,9 @@ end
 local function getPlayerTile()
 	local s = playerState()
 	if not s then return nil end
-	return math.floor(s.x), math.floor(s.y - 0.475)
+	-- Pemain berdiri di x, y-0.475; tile pemain = floor(x), floor(y-0.475)
+	-- Kalau koordinat game mulai dari 1, tambahkan 1 (disesuaikan user: 44,37)
+	return math.floor(s.x) + 1, math.floor(s.y - 0.475) + 1
 end
 
 -- Hitung ukuran world dari struktur grid (world table tidak selalu punya w/h)
@@ -566,7 +568,7 @@ local function execWalk(tx, ty)
 	while frame() do
 		local s = playerState()
 		if not s or s.dead then releaseInput(); return false end
-		local nx, ny = math.floor(s.x), math.floor(s.y - 0.475)
+		local nx, ny = math.floor(s.x) + 1, math.floor(s.y - 0.475) + 1
 		if s.grounded and ny ~= ty then releaseInput(); return false end
 		steerX(s, cx, 0.1)
 		if nx == tx and math.abs(s.x - cx) <= 0.2 and s.grounded and math.abs(s.vx or 0) < 2 then
@@ -596,7 +598,7 @@ local function execJumpUp(tx, ty)
 		end
 		steerX(s, cx, 0.1)
 		if airborne and s.grounded then
-			local nx, ny = math.floor(s.x), math.floor(s.y - 0.475)
+			local nx, ny = math.floor(s.x) + 1, math.floor(s.y - 0.475) + 1
 			if ny == ty then
 				if nx == tx and math.abs(s.x - cx) <= 0.25 then
 					releaseInput()
