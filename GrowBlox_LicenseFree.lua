@@ -1,935 +1,477 @@
--- GrowBlox license-free build
--- Fitur:
---   1. Auto Farm      : panen sugar cane otomatis + tanam seed otomatis
---   2. Auto Put/Break : hancurkan block + tempatkan block otomatis
---   3. Scanner        : daftar objek interaktif di sekitar
---   4. GUI            : built-in (tanpa dependency eksternal)
--- Tanpa key, HWID, account binding, atau server lisensi.
-
-local UIS = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
-
-local player = Players.LocalPlayer
+-- GrowBlox License-Free v2
+-- Dibangun dari data asli game Growblox (bukan tebakan):
+--   - World grid : world.fg[y][x], world.bg[y][x]
+--   - State      : state().x, state().y, state().facing
+--   - Inventory  : inv.slots = { {id=..., n=...}, ... }, inv:remove(id, n)
+--   - Place      : SetTile("fg"/"bg", x, y, id, false, false)
+--   - Punch      : Punch(x, y, mute, nil)
+--   - Item ID    : 20 = Dirt, 696 = Dirt Seed, 2 = Lava Seed, 5 = Rock Seed
+-- Tanpa key, HWID, akun, atau server lisensi.
 
 repeat task.wait() until game:IsLoaded()
 
--- ===========================================================================
--- 1. Anti-duplicate guard (self-healing)
--- ===========================================================================
-_G.HipHub_GrowBlox_Running = true
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local player = Players.LocalPlayer
 
--- Kalau ada sisa UI dari run sebelumnya, hancurkan dulu agar tidak bentrok.
-pcall(function()
-	local roots = {}
-	local function pushRoot(r)
-		if r then
-			table.insert(roots, r)
-		end
+local function globalFn(name)
+	local f = rawget(_G, name)
+	if type(f) ~= "function" and type(getgenv) == "function" then
+		pcall(function() f = getgenv()[name] end)
 	end
-	if type(gethui) == "function" then
-		pushRoot(gethui())
-	end
-	pushRoot(game:GetService("CoreGui"))
-	pushRoot(player:FindFirstChild("PlayerGui"))
-	for _, r in ipairs(roots) do
-		local old = r:FindFirstChild("HipHub_GrowBlox")
-		if old then
-			pcall(function()
-				old:Destroy()
-			end)
-		end
-	end
-end)
+	if type(f) == "function" then return f end
+	return nil
+end
+
+local getgc = globalFn("getgc")
+local getconsts = globalFn("getconstants") or (type(debug) == "table" and debug.getconstants) or nil
 
 -- ===========================================================================
--- 2. Configuration
+-- 1. Konfigurasi
 -- ===========================================================================
 local CONFIG = {
-	autoHarvest = true,
-	autoPlant = false,
-	autoBreak = false,
+	autoBreak = true,
 	autoPlace = false,
+	autoPlant = true,
 
-	range = 40,
-	interactDistance = 16,
-	arriveTimeout = 12,
-	hitCount = 2,
-	hitInterval = 0.4,
-	pickupWait = 1.2,
+	-- Item untuk place dan tanam
+	placeId = 20,      -- Dirt
+	plantId = 696,     -- Dirt Seed
+
+	range = 4,         -- jangkauan tile di sekitar pemain
+	interval = 0.25,   -- jeda antar aksi (detik)
+	mutePunch = true,
+	breakBackground = false,
 	walkSpeed = 16,
-
-	breakHits = 1,
-	breakInterval = 0.4,
-	placeWait = 0.4,
-
-	-- Lower-case substrings matched against object names.
-	sugarCaneNames = {
-		"sugar cane",
-		"sugarcane",
-		"sugar_cane",
-		"sugar",
-		"cane",
-		"tebu",
-		"plant",
-		"crop",
-		"harvest",
-		"dirt",
-		"grass",
-		"flower",
-		"wheat",
-		"carrot",
-		"potato",
-		"pumpkin",
-		"melon",
-		"tomato",
-		"corn",
-		"seed",
-	},
-	plantSpotNames = {
-		"plot",
-		"soil",
-		"dirt",
-		"farm",
-		"farmland",
-		"field",
-		"garden",
-		"seedbed",
-		"planter",
-		"bed",
-	},
-	breakBlockNames = {
-		"block",
-		"brick",
-		"stone",
-		"rock",
-		"ore",
-		"wood",
-		"log",
-		"plank",
-		"crate",
-		"box",
-		"hay",
-		"grass",
-		"flower",
-		"tree",
-	},
-	placeSpotNames = {
-		"slot",
-		"pad",
-		"base",
-		"floor",
-		"ground",
-		"foundation",
-		"grid",
-		"cell",
-		"placeholder",
-		"build",
-	},
 }
 
 -- ===========================================================================
--- 3. Character helpers
+-- 2. Temukan referensi game (sekali jalan, pola terbukti)
 -- ===========================================================================
-local function waitForCharacter(timeout)
-	timeout = timeout or 30
-	local waited = 0
-	while not player.Character do
-		if waited >= timeout then
-			return false
-		end
-		task.wait(0.5)
-		waited += 0.5
-	end
-	return true
+local Refs = {
+	World = nil,   -- tabel {fg=..., bg=..., w=..., h=...}
+	State = nil,   -- fungsi () -> {x, y, facing, ...}
+	Inv = nil,     -- tabel {slots=..., count=fn, remove=fn}
+	SetTile = nil, -- fungsi (layer, x, y, id, flip, ...)
+	Punch = nil,   -- fungsi (x, y, mute, ...)
+}
+
+local function isWorldTbl(v)
+	return type(rawget(v, "fg")) == "table" and type(rawget(v, "bg")) == "table"
+		and type(rawget(v, "w")) == "number" and type(rawget(v, "h")) == "number"
+		and rawget(v, "spawn") ~= nil
 end
 
-local function getCharacter()
-	return player.Character
+local function isInvTbl(v)
+	return type(rawget(v, "slots")) == "table"
+		and (rawget(v, "capacity") ~= nil or type(rawget(v, "count")) == "function")
 end
 
-local function getRootPart()
-	local character = getCharacter()
-	if not character then
-		return nil
-	end
-	return character:FindFirstChild("HumanoidRootPart")
+local function isStateHolder(v)
+	local fn = rawget(v, "state")
+	if type(fn) ~= "function" then return false end
+	local ok, s = pcall(fn)
+	return ok and type(s) == "table" and type(s.x) == "number" and type(s.y) == "number"
 end
 
-local function getHumanoid()
-	local character = getCharacter()
-	if not character then
-		return nil
-	end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		humanoid = character:FindFirstChild("Humanoid")
-	end
-	return humanoid
+local function constsOf(fn)
+	if not getconsts then return nil end
+	local ok, c = pcall(getconsts, fn)
+	if ok and type(c) == "table" then return c end
+	return nil
 end
 
-local function setWalkSpeed(speed)
-	local humanoid = getHumanoid()
-	if humanoid then
-		pcall(function()
-			humanoid.WalkSpeed = speed
-		end)
-	end
-end
-
-local function walkTo(position)
-	local humanoid = getHumanoid()
-	if not humanoid then
-		return false
-	end
-	local ok = pcall(function()
-		humanoid:MoveTo(position)
-	end)
-	return ok
-end
-
-local function distanceTo(part)
-	local root = getRootPart()
-	if not root or not part then
-		return math.huge
-	end
-	local ok, distance = pcall(function()
-		return (part.Position - root.Position).Magnitude
-	end)
-	if ok then
-		return distance
-	end
-	return math.huge
-end
-
-local function waitUntilNear(part, maxDistance)
-	local waited = 0
-	while waited < CONFIG.arriveTimeout do
-		if distanceTo(part) <= maxDistance then
-			return true
-		end
-		task.wait(0.25)
-		waited += 0.25
-	end
-	return distanceTo(part) <= maxDistance
-end
-
-local function nameMatches(name, keywords)
-	name = tostring(name):lower()
-	for _, keyword in ipairs(keywords) do
-		if name:find(keyword, 1, true) then
-			return true
-		end
+local function hasConst(fn, target)
+	local c = constsOf(fn)
+	if not c then return false end
+	for _, v in ipairs(c) do
+		if v == target then return true end
 	end
 	return false
 end
 
-local function safeDestroy(instance)
-	if instance and instance.Destroy then
-		pcall(instance.Destroy, instance)
+local function hasConstPair(fn, a, b)
+	local c = constsOf(fn)
+	if not c then return false end
+	local ha, hb = false, false
+	for _, v in ipairs(c) do
+		if v == a then ha = true end
+		if v == b then hb = true end
+		if ha and hb then return true end
 	end
+	return false
 end
 
+local function scanRefs()
+	if not getgc then
+		return false
+	end
+	for _, v in ipairs(getgc(true)) do
+		if type(v) == "table" then
+			if not Refs.World then
+				local ok, isW = pcall(isWorldTbl, v)
+				if ok and isW then Refs.World = v end
+			end
+			if not Refs.Inv then
+				local ok, isI = pcall(isInvTbl, v)
+				if ok and isI then Refs.Inv = v end
+			end
+			if not Refs.State then
+				local ok, isS = pcall(isStateHolder, v)
+				if ok and isS then Refs.State = rawget(v, "state") end
+			end
+		elseif type(v) == "function" then
+			if not Refs.SetTile and hasConstPair(v, "placedAt", "flips") then
+				Refs.SetTile = v
+			end
+			if not Refs.Punch and hasConstPair(v, "punch", "punch_miss") then
+				Refs.Punch = v
+			end
+		end
+		if Refs.World and Refs.Inv and Refs.State and Refs.SetTile and Refs.Punch then
+			break
+		end
+	end
+	return Refs.World ~= nil
+end
+
+local refsOk = scanRefs()
+print("[GrowBlox] refs: world=" .. tostring(Refs.World ~= nil)
+	.. " state=" .. tostring(Refs.State ~= nil)
+	.. " inv=" .. tostring(Refs.Inv ~= nil)
+	.. " settile=" .. tostring(Refs.SetTile ~= nil)
+	.. " punch=" .. tostring(Refs.Punch ~= nil))
+
+-- ===========================================================================
+-- 3. Helper data game
+-- ===========================================================================
+local function getState()
+	if not Refs.State then return nil end
+	local ok, s = pcall(Refs.State)
+	if ok and type(s) == "table" and type(s.x) == "number" then
+		return s
+	end
+	return nil
+end
+
+local function tileAt(layer, x, y)
+	local w = Refs.World
+	if not w or x < 0 or y < 0 or x >= w.w or y >= w.h then return nil end
+	local grid = w[layer]
+	local row = grid and grid[y]
+	return row and (row[x] or 0) or nil
+end
+
+local function getPlayerTile()
+	local s = getState()
+	if not s then return nil end
+	return math.floor(s.x + 0.5), math.floor(s.y - 0.475 + 0.5)
+end
+
+local function invCount(id)
+	if not Refs.Inv then return 0 end
+	for _, slot in ipairs(Refs.Inv.slots or {}) do
+		if type(slot) == "table" and slot.id == id then
+			return slot.n or 0
+		end
+	end
+	return 0
+end
+
+local function invRemove(id, n)
+	if not Refs.Inv then return false end
+	if type(Refs.Inv.remove) == "function" then
+		local ok = pcall(function()
+			Refs.Inv:remove(id, n or 1)
+		end)
+		return ok
+	end
+	return false
+end
+
+-- ===========================================================================
+-- 4. Aksi dasar game
+-- ===========================================================================
+local function placeTile(layer, x, y, id)
+	if not Refs.SetTile then return false end
+	local ok, err = pcall(Refs.SetTile, layer, x, y, id, false, false)
+	if ok then
+		invRemove(id, 1)
+		return true
+	end
+	warn("[GrowBlox] placeTile error: " .. tostring(err))
+	return false
+end
+
+local function punchTile(x, y)
+	if not Refs.Punch then return false end
+	local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
+	if not ok then
+		warn("[GrowBlox] punch error: " .. tostring(err))
+		return false
+	end
+	return true
+end
+
+local function breakable(id)
+	return id ~= 0 and id ~= nil
+end
+
+-- ===========================================================================
+-- 5. Scan tile di sekitar pemain
+-- ===========================================================================
+local function tilesAround(px, py, radius)
+	local out = {}
+	if not Refs.World then return out end
+	for y = py - radius, py + radius do
+		for x = px - radius, px + radius do
+			local fg = tileAt("fg", x, y)
+			local bg = tileAt("bg", x, y)
+			if fg ~= nil then
+				out[#out + 1] = {
+					x = x,
+					y = y,
+					fg = fg,
+					bg = bg,
+					distance = math.abs(x - px) + math.abs(y - py),
+				}
+			end
+		end
+	end
+	table.sort(out, function(a, b)
+		if a.distance ~= b.distance then return a.distance < b.distance end
+		if a.y ~= b.y then return a.y < b.y end
+		return a.x < b.x
+	end)
+	return out
+end
+
+-- ===========================================================================
+-- 6. Aksi farming
+-- ===========================================================================
+local function autoBreakOnce()
+	local px, py = getPlayerTile()
+	if not px then return false, "no state" end
+	local target = nil
+	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
+		if t.fg ~= 0 and breakable(t.fg) then
+			target = t
+			break
+		end
+		if CONFIG.breakBackground and t.bg ~= 0 and breakable(t.bg) then
+			target = t
+			break
+		end
+	end
+	if not target then return false, "no breakable" end
+	local ok = punchTile(target.x, target.y)
+	return ok, ok and ("punch " .. target.x .. "," .. target.y) or "punch failed"
+end
+
+local function autoPlaceOnce()
+	local px, py = getPlayerTile()
+	if not px then return false, "no state" end
+	local target = nil
+	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
+		if t.fg == 0 then
+			target = t
+			break
+		end
+	end
+	if not target then return false, "no empty tile" end
+	if invCount(CONFIG.placeId) <= 0 then return false, "no block" end
+	local ok = placeTile("fg", target.x, target.y, CONFIG.placeId)
+	return ok, ok and ("place " .. target.x .. "," .. target.y) or "place failed"
+end
+
+local function autoPlantOnce()
+	local px, py = getPlayerTile()
+	if not px then return false, "no state" end
+	local target = nil
+	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
+		if t.fg == 0 then
+			target = t
+			break
+		end
+	end
+	if not target then return false, "no empty tile" end
+	if invCount(CONFIG.plantId) <= 0 then return false, "no seed" end
+	local ok = placeTile("fg", target.x, target.y, CONFIG.plantId)
+	return ok, ok and ("plant " .. target.x .. "," .. target.y) or "plant failed"
+end
+
+-- ===========================================================================
+-- 7. Loop utama
+-- ===========================================================================
+local running = { breakLoop = true, placeLoop = true, plantLoop = true }
+
+local function startLoop(name, enabled, action)
+	task.spawn(function()
+		while running[name] do
+			if enabled() then
+				pcall(action)
+			end
+			task.wait(CONFIG.interval)
+		end
+	end)
+end
+
+startLoop("breakLoop", function() return CONFIG.autoBreak end, autoBreakOnce)
+startLoop("placeLoop", function() return CONFIG.autoPlace end, autoPlaceOnce)
+startLoop("plantLoop", function() return CONFIG.autoPlant end, autoPlantOnce)
+
+-- ===========================================================================
+-- 8. GUI kecil (tidak menghalangi)
+-- ===========================================================================
 local function notify(title, text, duration)
 	pcall(function()
-		StarterGui:SetCore("SendNotification", {
-			Title = tostring(title or "GrowBlox"),
-			Text = tostring(text or ""),
+		game:GetService("StarterGui"):SetCore("SendNotification", {
+			Title = tostring(title),
+			Text = tostring(text),
 			Duration = duration or 2,
 		})
 	end)
 end
 
--- ===========================================================================
--- 4. Executor function resolution
--- ===========================================================================
-local function getExecutorFunction(name)
-	local ok, fn = pcall(function()
-		local f = rawget(_G, name)
-		if type(f) ~= "function" and type(getgenv) == "function" then
-			f = getgenv()[name]
-		end
-		return f
-	end)
-	if ok and type(fn) == "function" then
-		return fn
-	end
-	return nil
-end
+local ui = {}
 
--- ===========================================================================
--- 5. Target scanning (detector-first)
--- ===========================================================================
-local function isOwnedByPlayer(instance)
-	local character = getCharacter()
-	if character and instance:IsDescendantOf(character) then
-		return true
-	end
-	local backpack = player:FindFirstChild("Backpack")
-	if backpack and instance:IsDescendantOf(backpack) then
-		return true
-	end
-	return false
-end
-
-local function getPartPosition(instance)
-	if instance:IsA("BasePart") then
-		return instance.Position
-	end
-	local part = instance:FindFirstChildWhichIsA("BasePart")
-	if part then
-		return part.Position
-	end
-	return nil
-end
-
--- Cari target interaktif terdekat. Detector-nya yang dicari lebih dulu,
--- lalu nama dicocokkan ke detector, parent, dan grandparent.
-local function findInteractable(keywords)
-	local root = getRootPart()
-	if not root then
-		return nil
-	end
-
-	local center = root.Position
-	local best = nil
-	local bestDistance = math.huge
-
-	for _, descendant in ipairs(workspace:GetDescendants()) do
-		local ok = pcall(function()
-			local isClick = descendant:IsA("ClickDetector")
-			local isPrompt = descendant:IsA("ProximityPrompt")
-			if not isClick and not isPrompt then
-				return
-			end
-
-			local parent = descendant.Parent
-			if not parent then
-				return
-			end
-
-			if isOwnedByPlayer(descendant) then
-				return
-			end
-
-			local matched = false
-			if keywords then
-				local names = {
-					descendant.Name,
-					parent.Name,
-					parent.Parent and parent.Parent.Name,
-				}
-				for _, n in ipairs(names) do
-					if nameMatches(n, keywords) then
-						matched = true
-						break
-					end
-				end
-			else
-				matched = true
-			end
-
-			if not matched then
-				return
-			end
-
-			local targetPart
-			if parent:IsA("BasePart") then
-				targetPart = parent
-			else
-				targetPart = parent:FindFirstChildWhichIsA("BasePart")
-			end
-
-			local position = targetPart and targetPart.Position
-			if not position then
-				position = getPartPosition(parent)
-			end
-			if not position then
-				return
-			end
-
-			local distance = (position - center).Magnitude
-			if distance <= CONFIG.range and distance < bestDistance then
-				bestDistance = distance
-				best = {
-					part = targetPart,
-					name = parent.Name,
-					className = parent.ClassName,
-					distance = distance,
-					clickDetector = isClick and descendant or nil,
-					prompt = isPrompt and descendant or nil,
-				}
-			end
-		end)
-	end
-
-	return best
-end
-
-local function findSugarCane()
-	return findInteractable(CONFIG.sugarCaneNames)
-end
-
-local function findPlantSpot()
-	return findInteractable(CONFIG.plantSpotNames)
-end
-
-local function findBreakBlock()
-	return findInteractable(CONFIG.breakBlockNames)
-end
-
-local function findPlaceSpot()
-	return findInteractable(CONFIG.placeSpotNames)
-end
-
--- ===========================================================================
--- 6. Interaction helpers
--- ===========================================================================
-local function fireClickDetector(clickDetector)
-	if not clickDetector then
-		return false
-	end
-
-	local fire = getExecutorFunction("fireclickdetector")
-	if fire then
-		local ok = pcall(fire, clickDetector)
-		if ok then
-			return true
-		end
-		ok = pcall(fire, clickDetector, 1)
-		if ok then
-			return true
-		end
-		local part = clickDetector.Parent
-		if part and part:IsA("BasePart") then
-			ok = pcall(fire, clickDetector, 0)
-			if ok then
-				return true
-			end
-		end
-	end
-
-	local fireSignal = getExecutorFunction("firesignal")
-	if fireSignal then
-		if clickDetector.MouseClick then
-			local ok = pcall(fireSignal, clickDetector.MouseClick)
-			if ok then
-				return true
-			end
-		end
-	end
-
-	local fireTouch = getExecutorFunction("firetouchinterest")
-	if fireTouch then
-		local part = clickDetector.Parent
-		if part and part:IsA("BasePart") then
-			local root = getRootPart()
-			local character = getCharacter()
-			local touchers = { root, character }
-			for _, toucher in ipairs(touchers) do
-				if toucher then
-					local ok = pcall(fireTouch, part, toucher, 0)
-					if ok then
-						return true
-					end
-					ok = pcall(fireTouch, part, toucher, 1)
-					if ok then
-						return true
-					end
-				end
-			end
-		end
-	end
-
-	return false
-end
-
-local function fireProximityPrompt(prompt)
-	if not prompt then
-		return false
-	end
-
-	local fire = getExecutorFunction("fireproximityprompt")
-	if fire then
-		local ok = pcall(fire, prompt)
-		if ok then
-			return true
-		end
-	end
-
-	local fireSignal = getExecutorFunction("firesignal")
-	if fireSignal then
-		if prompt.Triggered then
-			local ok = pcall(fireSignal, prompt.Triggered)
-			if ok then
-				return true
-			end
-		end
-	end
-
-	if prompt.InputHoldBegin and prompt.InputHoldEnd then
-		pcall(prompt.InputHoldBegin, prompt)
-		task.wait(0.08)
-		pcall(prompt.InputHoldEnd, prompt)
-		return true
-	end
-
-	return false
-end
-
-local function interactWithTarget(target)
-	if not target then
-		return false
-	end
-	if target.clickDetector then
-		if fireClickDetector(target.clickDetector) then
-			return true
-		end
-	end
-	if target.prompt then
-		if fireProximityPrompt(target.prompt) then
-			return true
-		end
-	end
-	return false
-end
-
--- ===========================================================================
--- 7. Farm actions
--- ===========================================================================
-local function getTargetPart(target)
-	if not target then
-		return nil
-	end
-	if target.part and target.part:IsA("BasePart") then
-		return target.part
-	end
-	local part = target.clickDetector and target.clickDetector.Parent
-	if part and part:IsA("BasePart") then
-		return part
-	end
-	part = target.prompt and target.prompt.Parent
-	if part and part:IsA("BasePart") then
-		return part
-	end
-	return nil
-end
-
-local function walkToTarget(target)
-	local part = getTargetPart(target)
-	if not part then
-		return false
-	end
-	setWalkSpeed(CONFIG.walkSpeed)
-	walkTo(part.Position)
-	return waitUntilNear(part, CONFIG.interactDistance)
-end
-
-local function doInteractions(target, hitsNeeded, interval)
-	local part = getTargetPart(target)
-	if not part then
-		return 0
-	end
-
-	local hits = 0
-	for i = 1, hitsNeeded do
-		if not part.Parent then
-			break
-		end
-		if interactWithTarget(target) then
-			hits += 1
-		end
-		if i < hitsNeeded then
-			task.wait(interval)
-		end
-	end
-	return hits
-end
-
-local function harvestSugarCane()
-	local target = findSugarCane()
-	if not target then
-		return 0, "no target"
-	end
-
-	if not walkToTarget(target) then
-		return 0, "target too far"
-	end
-
-	local hits = doInteractions(target, CONFIG.hitCount, CONFIG.hitInterval)
-	if hits == 0 then
-		return 0, "click failed"
-	end
-
-	task.wait(CONFIG.pickupWait)
-	return hits, "ok"
-end
-
-local function plantSeed()
-	local target = findPlantSpot()
-	if not target then
-		return 0, "no plant spot"
-	end
-
-	if not walkToTarget(target) then
-		return 0, "target too far"
-	end
-
-	if interactWithTarget(target) then
-		task.wait(CONFIG.placeWait)
-		return 1, "ok"
-	end
-
-	return 0, "interact failed"
-end
-
-local function breakBlock()
-	local target = findBreakBlock()
-	if not target then
-		return 0, "no break block"
-	end
-
-	if not walkToTarget(target) then
-		return 0, "target too far"
-	end
-
-	local hits = doInteractions(target, CONFIG.breakHits, CONFIG.breakInterval)
-	if hits == 0 then
-		return 0, "break interact failed"
-	end
-
-	task.wait(CONFIG.pickupWait)
-	return hits, "ok"
-end
-
-local function placeBlock()
-	local target = findPlaceSpot()
-	if not target then
-		return 0, "no place spot"
-	end
-
-	if not walkToTarget(target) then
-		return 0, "target too far"
-	end
-
-	if interactWithTarget(target) then
-		task.wait(CONFIG.placeWait)
-		return 1, "ok"
-	end
-
-	return 0, "place interact failed"
-end
-
--- ===========================================================================
--- 8. Scanner
--- ===========================================================================
-local function scanNearby(radius)
-	local root = getRootPart()
-	if not root then
-		warn("[GrowBlox] Character not found.")
-		return {}
-	end
-
-	local center = root.Position
-	local found = {}
-
-	for _, descendant in ipairs(workspace:GetDescendants()) do
-		local ok = pcall(function()
-			local isClick = descendant:IsA("ClickDetector")
-			local isPrompt = descendant:IsA("ProximityPrompt")
-			if not isClick and not isPrompt then
-				return
-			end
-
-			local parent = descendant.Parent
-			if not parent then
-				return
-			end
-
-			local part
-			if parent:IsA("BasePart") then
-				part = parent
-			else
-				part = parent:FindFirstChildWhichIsA("BasePart")
-			end
-
-			local position = part and part.Position
-			if not position then
-				return
-			end
-
-			local distance = (position - center).Magnitude
-			if distance <= radius then
-				table.insert(found, {
-					name = parent.Name,
-					className = parent.ClassName,
-					detector = isClick and "ClickDetector" or "ProximityPrompt",
-					distance = math.floor(distance),
-				})
-			end
-		end)
-	end
-
-	table.sort(found, function(a, b)
-		return a.distance < b.distance
-	end)
-
-	return found
-end
-
-local function printScan(radius)
-	local found = scanNearby(radius)
-	warn("[GrowBlox] Scanner: " .. #found .. " interactables within " .. radius .. " studs")
-	for i, entry in ipairs(found) do
-		if i > 50 then
-			warn("[GrowBlox] ... " .. (#found - 50) .. " more (use _G.GrowBlox.scan(radius) for full list)")
-			break
-		end
-		warn(string.format(
-			"[GrowBlox] %d. [%s] %s (%d studs) via %s",
-			i,
-			entry.className,
-			entry.name,
-			entry.distance,
-			entry.detector
-		))
-	end
-	return found
-end
-
--- ===========================================================================
--- 9. GUI (built-in, always created first)
--- ===========================================================================
-local function createMainUi()
+local function createGui()
 	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "HipHub_GrowBlox"
+	screenGui.Name = "GrowBloxUI"
 	screenGui.ResetOnSpawn = false
+	screenGui.IgnoreGuiInset = true
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screenGui.DisplayOrder = 2147483647
 
-	-- Prioritaskan PlayerGui agar pasti terlihat.
-	local parent = nil
 	pcall(function()
-		parent = player:WaitForChild("PlayerGui")
+		local parent = player:FindFirstChild("PlayerGui")
+		if not parent and type(gethui) == "function" then parent = gethui() end
+		if not parent then parent = game:GetService("CoreGui") end
+		screenGui.Parent = parent
 	end)
-	if not parent and type(gethui) == "function" then
-		pcall(function()
-			parent = gethui()
-		end)
-	end
-	if not parent then
-		pcall(function()
-			parent = game:GetService("CoreGui")
-		end)
-	end
-	screenGui.Parent = parent
 
-	-- Container utama
 	local frame = Instance.new("Frame")
-	frame.Name = "Main"
-	frame.Size = UDim2.new(0, 240, 0, 270)
-	frame.Position = UDim2.new(0.5, -120, 0.5, -135)
-	frame.BackgroundColor3 = Color3.fromRGB(18, 22, 40)
+	frame.Size = UDim2.new(0, 180, 0, 158)
+	frame.Position = UDim2.new(0.5, -90, 1, -162)
+	frame.AnchorPoint = Vector2.new(0.5, 1)
+	frame.BackgroundColor3 = Color3.fromRGB(15, 18, 32)
 	frame.BorderSizePixel = 0
 	frame.Active = true
 	frame.Draggable = true
 	frame.Parent = screenGui
 
-	local frameCorner = Instance.new("UICorner")
-	frameCorner.CornerRadius = UDim.new(0, 10)
-	frameCorner.Parent = frame
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = frame
 
-	local frameStroke = Instance.new("UIStroke")
-	frameStroke.Color = Color3.fromRGB(0, 200, 255)
-	frameStroke.Thickness = 1
-	frameStroke.Transparency = 0.4
-	frameStroke.Parent = frame
-
-	-- Title bar
 	local title = Instance.new("TextLabel")
-	title.Size = UDim2.new(1, -20, 0, 30)
-	title.Position = UDim2.new(0, 10, 0, 8)
+	title.Size = UDim2.new(1, -40, 0, 24)
+	title.Position = UDim2.new(0, 8, 0, 4)
 	title.BackgroundTransparency = 1
-	title.Text = "GrowBlox (License-Free)"
+	title.Text = "GrowBlox"
 	title.TextColor3 = Color3.fromRGB(255, 255, 255)
 	title.Font = Enum.Font.GothamBold
-	title.TextSize = 14
+	title.TextSize = 12
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.Parent = frame
 
-	local function addToggleButton(buttonName, configKey, y)
-		local button = Instance.new("TextButton")
-		button.Name = configKey
-		button.Size = UDim2.new(1, -20, 0, 34)
-		button.Position = UDim2.new(0, 10, 0, y)
-		button.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
-		button.BorderSizePixel = 0
-		button.Text = buttonName .. ": " .. (CONFIG[configKey] and "ON" or "OFF")
-		button.TextColor3 = Color3.fromRGB(255, 255, 255)
-		button.Font = Enum.Font.GothamBold
-		button.TextSize = 13
-		button.AutoButtonColor = true
-		button.Parent = frame
+	local hideBtn = Instance.new("TextButton")
+	hideBtn.Size = UDim2.new(0, 22, 0, 20)
+	hideBtn.Position = UDim2.new(1, -26, 0, 4)
+	hideBtn.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+	hideBtn.BorderSizePixel = 0
+	hideBtn.Text = "X"
+	hideBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	hideBtn.Font = Enum.Font.GothamBold
+	hideBtn.TextSize = 10
+	hideBtn.Parent = frame
 
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 6)
-		corner.Parent = button
+	local hideCorner = Instance.new("UICorner")
+	hideCorner.CornerRadius = UDim.new(0, 5)
+	hideCorner.Parent = hideBtn
 
-		button.MouseButton1Click:Connect(function()
+	local visible = true
+	local function setVisible(v)
+		visible = v
+		frame.Size = v and UDim2.new(0, 180, 0, 158) or UDim2.new(0, 70, 0, 28)
+		for _, child in ipairs(frame:GetChildren()) do
+			if child ~= title and child ~= hideBtn then
+				child.Visible = v
+			end
+		end
+	end
+
+	hideBtn.MouseButton1Click:Connect(function()
+		setVisible(not visible)
+		hideBtn.Text = visible and "X" or "+"
+	end)
+
+	local function addToggle(buttonName, configKey, y)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, -16, 0, 30)
+		btn.Position = UDim2.new(0, 8, 0, y)
+		btn.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
+		btn.BorderSizePixel = 0
+		btn.Text = buttonName .. ": " .. (CONFIG[configKey] and "ON" or "OFF")
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 12
+		btn.AutoButtonColor = true
+		btn.Parent = frame
+
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, 5)
+		c.Parent = btn
+
+		btn.MouseButton1Click:Connect(function()
 			CONFIG[configKey] = not CONFIG[configKey]
-			button.Text = buttonName .. ": " .. (CONFIG[configKey] and "ON" or "OFF")
+			btn.Text = buttonName .. ": " .. (CONFIG[configKey] and "ON" or "OFF")
 			notify(buttonName, CONFIG[configKey] and "ON" or "OFF", 1.5)
 		end)
 	end
 
-	addToggleButton("Auto Harvest", "autoHarvest", 44)
-	addToggleButton("Auto Plant", "autoPlant", 84)
-	addToggleButton("Auto Break", "autoBreak", 124)
-	addToggleButton("Auto Place", "autoPlace", 164)
+	addToggle("Auto Break", "autoBreak", 30)
+	addToggle("Auto Place", "autoPlace", 64)
+	addToggle("Auto Plant", "autoPlant", 98)
 
-	-- Scan button
-	local scanButton = Instance.new("TextButton")
-	scanButton.Size = UDim2.new(1, -20, 0, 34)
-	scanButton.Position = UDim2.new(0, 10, 0, 204)
-	scanButton.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
-	scanButton.BorderSizePixel = 0
-	scanButton.Text = "SCAN NEARBY (30)"
-	scanButton.TextColor3 = Color3.fromRGB(0, 0, 0)
-	scanButton.Font = Enum.Font.GothamBold
-	scanButton.TextSize = 13
-	scanButton.Parent = frame
-
-	local scanCorner = Instance.new("UICorner")
-	scanCorner.CornerRadius = UDim.new(0, 6)
-	scanCorner.Parent = scanButton
-
-	scanButton.MouseButton1Click:Connect(function()
-		printScan(30)
-	end)
-
-	-- Tombol tutup
-	local closeButton = Instance.new("TextButton")
-	closeButton.Size = UDim2.new(0, 24, 0, 24)
-	closeButton.Position = UDim2.new(1, -30, 0, 8)
-	closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
-	closeButton.BorderSizePixel = 0
-	closeButton.Text = "X"
-	closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-	closeButton.Font = Enum.Font.GothamBold
-	closeButton.TextSize = 12
-	closeButton.Parent = frame
-
-	local closeCorner = Instance.new("UICorner")
-	closeCorner.CornerRadius = UDim.new(0, 6)
-	closeCorner.Parent = closeButton
-
-	closeButton.MouseButton1Click:Connect(function()
-		safeDestroy(screenGui)
-	end)
-
-	return {
-		screenGui = screenGui,
-	}
+	ui.screenGui = screenGui
 end
 
--- ===========================================================================
--- 10. Create UI immediately (no character wait)
--- ===========================================================================
-local uiOk, uiHandle = pcall(createMainUi)
+local uiOk, uiErr = pcall(createGui)
 if not uiOk then
-	warn("[GrowBlox] UI creation failed: " .. tostring(uiHandle))
-	uiHandle = nil
-else
-	print("[GrowBlox] UI created under " .. tostring(uiHandle.screenGui and uiHandle.screenGui.Parent and uiHandle.screenGui.Parent.Name or "?"))
-	notify("GrowBlox", "Script loaded. GUI is ready.", 3)
+	warn("[GrowBlox] GUI failed: " .. tostring(uiErr))
 end
 
 -- ===========================================================================
--- 11. Loops
--- ===========================================================================
-local loopRunning = {
-	harvest = true,
-	plant = true,
-	breakBlocks = true,
-	placeBlocks = true,
-}
-
-local function startLoop(name, enabled, action)
-	task.spawn(function()
-		while loopRunning[name] do
-			if enabled() then
-				local ok, err = pcall(action)
-				if not ok then
-					warn("[GrowBlox] " .. name .. " error: " .. tostring(err))
-				end
-			end
-			task.wait(0.25)
-		end
-	end)
-end
-
-startLoop("harvest", function() return CONFIG.autoHarvest end, harvestSugarCane)
-startLoop("plant", function() return CONFIG.autoPlant end, plantSeed)
-startLoop("breakBlocks", function() return CONFIG.autoBreak end, breakBlock)
-startLoop("placeBlocks", function() return CONFIG.autoPlace end, placeBlock)
-
--- ===========================================================================
--- 12. Startup report
--- ===========================================================================
-task.spawn(function()
-	task.wait(2)
-	waitForCharacter(10)
-	local cane = findSugarCane()
-	local spot = findPlantSpot()
-	local block = findBreakBlock()
-	local place = findPlaceSpot()
-
-	warn(string.format(
-		"[GrowBlox] Detected -> cane: %s | plant: %s | break: %s | place: %s",
-		cane and ("\"" .. cane.name .. "\"") or "none",
-		spot and ("\"" .. spot.name .. "\"") or "none",
-		block and ("\"" .. block.name .. "\"") or "none",
-		place and ("\"" .. place.name .. "\"") or "none"
-	))
-
-	notify(
-		"GrowBlox Loaded",
-		"Cane: " .. (cane and cane.name or "none")
-			.. " | Plant: " .. (spot and spot.name or "none")
-			.. " | Break: " .. (block and block.name or "none")
-			.. " | Place: " .. (place and place.name or "none"),
-		5
-	)
-end)
-
--- ===========================================================================
--- 13. Public test/debug API
+-- 9. API publik
 -- ===========================================================================
 _G.GrowBlox = {
 	config = CONFIG,
-	harvestNow = harvestSugarCane,
-	plantNow = plantSeed,
-	breakNow = breakBlock,
-	placeNow = placeBlock,
-	scan = scanNearby,
-	printScan = printScan,
-	findSugarCane = findSugarCane,
-	findPlantSpot = findPlantSpot,
-	findBreakBlock = findBreakBlock,
-	findPlaceSpot = findPlaceSpot,
-	getUi = function()
-		return uiHandle and uiHandle.screenGui
+	refs = Refs,
+	breakOnce = autoBreakOnce,
+	placeOnce = autoPlaceOnce,
+	plantOnce = autoPlantOnce,
+	getState = getState,
+	tileAt = tileAt,
+	scanAround = function(radius)
+		local px, py = getPlayerTile()
+		if not px then return {} end
+		return tilesAround(px, py, radius or CONFIG.range)
 	end,
 	destroy = function()
-		if uiHandle and uiHandle.screenGui then
-			safeDestroy(uiHandle.screenGui)
+		running.breakLoop = false
+		running.placeLoop = false
+		running.plantLoop = false
+		if ui.screenGui then
+			pcall(function() ui.screenGui:Destroy() end)
 		end
-		loopRunning.harvest = false
-		loopRunning.plant = false
-		loopRunning.breakBlocks = false
-		loopRunning.placeBlocks = false
-		_G.HipHub_GrowBlox_Running = nil
 		_G.GrowBlox = nil
 	end,
 }
+
+print("[GrowBlox] Loaded. AutoBreak=" .. tostring(CONFIG.autoBreak)
+	.. " AutoPlace=" .. tostring(CONFIG.autoPlace)
+	.. " AutoPlant=" .. tostring(CONFIG.autoPlant))
+notify("GrowBlox", "Loaded. Break=" .. tostring(CONFIG.autoBreak and "ON" or "OFF") .. " Plant=" .. tostring(CONFIG.autoPlant and "ON" or "OFF"), 3)
