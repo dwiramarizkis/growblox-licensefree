@@ -188,23 +188,69 @@ local function isByteNetSendFn(fn)
 	return true
 end
 
-local function collectRemoteUpvalues(fn, out, limit)
+local function isRemoteInstance(v)
+	local ok = pcall(function()
+		return typeof(v) == "Instance" and (v:IsA("RemoteEvent") or v:IsA("RemoteFunction"))
+	end)
+	return ok and true or false
+end
+
+local function collectRemoteUpvalues(fn, out, limit, depth)
 	-- Kumpulkan RemoteEvent/RemoteFunction yang menjadi upvalue sebuah fungsi.
+	-- Menelusuri upvalue berbentuk table/function sampai depth tertentu, karena
+	-- remote sering disembunyikan di dalam table modul atau closure pengirim.
 	limit = limit or 8
+	depth = depth or 0
+	if depth > 3 then return 0 end
 	if not getupvalue then return 0 end
 	local count = 0
 	pcall(function()
 		for i = 1, 40 do
+			if count >= limit then break end
 			local okU, _, uv = pcall(getupvalue, fn, i)
 			if not okU then break end
-			if typeof(uv) == "Instance" and (uv:IsA("RemoteEvent") or uv:IsA("RemoteFunction")) then
+			if isRemoteInstance(uv) then
 				out[#out + 1] = uv
 				count = count + 1
-				if count >= limit then break end
+			elseif type(uv) == "table" and depth < 3 then
+				-- Scan isi table (mis. {tile=RemoteEvent, punch=RemoteEvent}).
+				for _, v in pairs(uv) do
+					if count >= limit then break end
+					if isRemoteInstance(v) then
+						out[#out + 1] = v
+						count = count + 1
+					elseif type(v) == "function" then
+						count = count + collectRemoteUpvalues(v, out, limit, depth + 1)
+					elseif type(v) == "table" then
+						count = count + collectRemoteUpvalues(v, out, limit, depth + 1)
+					end
+				end
+			elseif type(uv) == "function" and depth < 3 then
+				count = count + collectRemoteUpvalues(uv, out, limit, depth + 1)
 			end
 		end
 	end)
 	return count
+end
+
+local function pickBestCandidate(cands)
+	-- Pilih kandidat fungsi yang memegang remote upvalue paling banyak.
+	-- Kalau tidak ada yang memegang remote, fallback ke kandidat pertama.
+	local best, bestRemotes, bestScore = nil, {}, -1
+	for _, fn in ipairs(cands or {}) do
+		local remotes = {}
+		local n = collectRemoteUpvalues(fn, remotes, 6, 0)
+		if n > bestScore then
+			best = fn
+			bestRemotes = remotes
+			bestScore = n
+		end
+		if n > 0 then break end
+	end
+	if not best and #cands > 0 then
+		best = cands[1]
+	end
+	return best, bestRemotes
 end
 
 local function isPunchFn(fn)
@@ -265,7 +311,7 @@ local function scanRefs()
 				pcall(function()
 					for i = 1, 8 do
 						local okU, _, uv = pcall(getupvalue, v, i)
-						if okU and typeof(uv) == "Instance" and (uv:IsA("RemoteEvent") or uv:IsA("RemoteFunction")) then
+						if okU and isRemoteInstance(uv) then
 							Refs.FireServer = uv.FireServer
 							Refs.RbxNet = uv
 							Refs.IsReliable = hasConsts(v, "reliable")
@@ -276,17 +322,9 @@ local function scanRefs()
 			end
 		end
 	end
-	Refs.SetTile = settileSeen[1]
-	Refs.Punch = punchSeen[1]
-
-	-- Kumpulkan remote upvalue dari fungsi SetTile/Punch yang ditemukan.
-	-- Ini penting: fungsi hasil scan biasanya memegang RemoteEvent server.
-	if Refs.SetTile then
-		collectRemoteUpvalues(Refs.SetTile, Refs.SetTileRemotes, 4)
-	end
-	if Refs.Punch then
-		collectRemoteUpvalues(Refs.Punch, Refs.PunchRemotes, 4)
-	end
+	-- Pilih kandidat terbaik (yang memegang remote upvalue).
+	Refs.SetTile, Refs.SetTileRemotes = pickBestCandidate(settileSeen)
+	Refs.Punch, Refs.PunchRemotes = pickBestCandidate(punchSeen)
 
 	print(string.format("[GrowBlox] refs: world=%s state=%s inv=%s settile=%s punch=%s setcand=%d punchcand=%d bytenet=%s setRemote=%d punchRemote=%d",
 		tostring(Refs.World ~= nil),
@@ -447,6 +485,7 @@ if not SetTileRemote and #Refs.SetTileRemotes > 0 then
 	print("[GrowBlox] SetTileRemote fallback ke upvalue SetTile: " .. SetTileRemote:GetFullName())
 end
 
+-- Punch remote: coba juga untuk SetTile kalau terpaksa (beberapa game pakai 1 remote).
 if not SetTileRemote and #Refs.PunchRemotes > 0 then
 	SetTileRemote = Refs.PunchRemotes[1]
 	print("[GrowBlox] SetTileRemote fallback ke upvalue Punch: " .. SetTileRemote:GetFullName())
