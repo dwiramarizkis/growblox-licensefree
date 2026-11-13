@@ -241,6 +241,22 @@ if Shared then
 	pcall(function() ItemDB = require(Shared:FindFirstChild("ItemDB")) end)
 	pcall(function() InventoryModule = require(Shared:FindFirstChild("Inventory")) end)
 	pcall(function() NetOk, Net = pcall(require, Shared:FindFirstChild("Net")) end)
+else
+	-- Cari folder shared di ReplicatedStorage dengan polling
+	for _, child in ipairs(ReplicatedStorage:GetChildren()) do
+		pcall(function()
+			local net = child:FindFirstChild("Net")
+			if net then
+				NetOk, Net = pcall(require, net)
+			end
+		end)
+		pcall(function()
+			local itemdb = child:FindFirstChild("ItemDB")
+			if itemdb then
+				ItemDB = require(itemdb)
+			end
+		end)
+	end
 end
 
 print("[GrowBlox] NetOk=" .. tostring(NetOk) .. " Shared=" .. tostring(Shared ~= nil) .. " SetTileRemote=" .. tostring(SetTileRemote ~= nil))
