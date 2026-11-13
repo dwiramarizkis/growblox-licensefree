@@ -182,7 +182,7 @@ end
 
 local refsOk = scanRefs()
 if not refsOk then
-	notify("GrowBlox", "Gagal menemukan world. Jalankan ulang di dalam world.", 4)
+	warn("[GrowBlox] Gagal menemukan world. Jalankan ulang di dalam world.")
 end
 
 -- ===========================================================================
