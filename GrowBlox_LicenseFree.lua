@@ -41,8 +41,8 @@ local CONFIG = {
 	autoPlant = true,
 	pnbEnabled = false,
 
-	placeId = 20,       -- Dirt
-	plantId = 696,      -- Dirt Seed
+	placeId = 2,        -- Dirt (block)
+	plantId = 3,        -- Dirt Seed
 
 	range = 4,
 	interval = 0.25,
