@@ -272,19 +272,39 @@ local function getPlayerTile()
 	return math.floor(s.x), math.floor(s.y - 0.475)
 end
 
+-- Debug: cetak grid 3x3 di sekitar pemain
+local function debugGrid()
+	local px, py = getPlayerTile()
+	if not px then print("[GrowBlox] debugGrid: no state") return end
+	for y = py - 1, py + 1 do
+		local row = {}
+		for x = px - 1, px + 1 do
+			row[#row + 1] = x .. ":" .. tostring(tileAt("fg", x, y))
+		end
+		print("[GrowBlox] grid y=" .. y .. " " .. table.concat(row, " "))
+	end
+end
+
 local function tileAt(layer, x, y)
 	local w = Refs.World
 	if not w then return nil end
 	local grid = w[layer]
-	local row = grid and grid[y]
-	if not row then return nil end
-	return row[x] or 0
+	if not grid then return nil end
+	-- Coba akses sebagai [y][x]
+	local row = grid[y]
+	if type(row) == "table" then
+		return row[x] or 0
+	end
+	-- Fallback: flat array [y * width + x]? coba indeks umum
+	local ww = rawget(w, "w") or rawget(w, "width")
+	if type(ww) == "number" and ww > 0 then
+		return grid[(y * ww) + x] or 0
+	end
+	return 0
 end
 
 local function fgIdAt(x, y)
-	local w = Refs.World
-	local row = w and w.fg[y]
-	return (row and row[x]) or 0
+	return tileAt("fg", x, y)
 end
 
 local function invCount(id)
@@ -574,6 +594,12 @@ local function autoBreakOnce()
 	end
 	return false, "break failed: " .. tostring(r)
 end
+
+-- Debug pertama kali: tampilkan grid supaya tahu tile terdeteksi benar
+task.spawn(function()
+	task.wait(2)
+	debugGrid()
+end)
 
 local function autoPlantOnce()
 	local px, py = getPlayerTile()
