@@ -105,6 +105,8 @@ local Refs = {
 	RbxNet = nil,   -- instance RemoteEvent (ByteNetReliable)
 	FireServer = nil, -- fungsi pengirim asli
 	IsReliable = false,
+	SetTileRemotes = {}, -- remote upvalue dari Refs.SetTile (kalau ada)
+	PunchRemotes = {},   -- remote upvalue dari Refs.Punch (kalau ada)
 }
 
 local function isWorldTbl(v)
@@ -186,6 +188,25 @@ local function isByteNetSendFn(fn)
 	return true
 end
 
+local function collectRemoteUpvalues(fn, out, limit)
+	-- Kumpulkan RemoteEvent/RemoteFunction yang menjadi upvalue sebuah fungsi.
+	limit = limit or 8
+	if not getupvalue then return 0 end
+	local count = 0
+	pcall(function()
+		for i = 1, 40 do
+			local okU, _, uv = pcall(getupvalue, fn, i)
+			if not okU then break end
+			if typeof(uv) == "Instance" and (uv:IsA("RemoteEvent") or uv:IsA("RemoteFunction")) then
+				out[#out + 1] = uv
+				count = count + 1
+				if count >= limit then break end
+			end
+		end
+	end)
+	return count
+end
+
 local function isPunchFn(fn)
 	if not getconsts then return false end
 	if hasConsts(fn, "Empty the Vending Machine first!", "newCrack")
@@ -257,7 +278,17 @@ local function scanRefs()
 	end
 	Refs.SetTile = settileSeen[1]
 	Refs.Punch = punchSeen[1]
-	print(string.format("[GrowBlox] refs: world=%s state=%s inv=%s settile=%s punch=%s setcand=%d punchcand=%d bytenet=%s",
+
+	-- Kumpulkan remote upvalue dari fungsi SetTile/Punch yang ditemukan.
+	-- Ini penting: fungsi hasil scan biasanya memegang RemoteEvent server.
+	if Refs.SetTile then
+		collectRemoteUpvalues(Refs.SetTile, Refs.SetTileRemotes, 4)
+	end
+	if Refs.Punch then
+		collectRemoteUpvalues(Refs.Punch, Refs.PunchRemotes, 4)
+	end
+
+	print(string.format("[GrowBlox] refs: world=%s state=%s inv=%s settile=%s punch=%s setcand=%d punchcand=%d bytenet=%s setRemote=%d punchRemote=%d",
 		tostring(Refs.World ~= nil),
 		tostring(Refs.State ~= nil),
 		tostring(Refs.Inv ~= nil),
@@ -265,7 +296,15 @@ local function scanRefs()
 		tostring(Refs.Punch ~= nil),
 		#settileSeen,
 		#punchSeen,
-		Refs.RbxNet and Refs.RbxNet:GetFullName() or "TIDAK"))
+		Refs.RbxNet and Refs.RbxNet:GetFullName() or "TIDAK",
+		#Refs.SetTileRemotes,
+		#Refs.PunchRemotes))
+	for i, r in ipairs(Refs.SetTileRemotes) do
+		print("[GrowBlox] SetTileRemote upvalue #" .. i .. ": " .. r:GetFullName())
+	end
+	for i, r in ipairs(Refs.PunchRemotes) do
+		print("[GrowBlox] PunchRemote upvalue #" .. i .. ": " .. r:GetFullName())
+	end
 	return Refs.World ~= nil
 end
 
@@ -392,12 +431,25 @@ if not SetTileRemote then
 	SetTileRemote = findRemote(ReplicatedStorage, "SetTile")
 end
 
--- Fallback terakhir: pakai ByteNetReliable yang terdeteksi dari scan GC.
+-- Fallback: pakai ByteNetReliable yang terdeteksi dari scan GC.
 -- Remote ini dipakai game yang memakai ByteNet RbxNet (nama acak). Kita kirim
 -- packet dengan format: layer (1/2), x, y, id, flip=false.
 if not SetTileRemote and Refs.RbxNet then
 	SetTileRemote = Refs.RbxNet
 	print("[GrowBlox] SetTileRemote fallback ke ByteNetReliable: " .. Refs.RbxNet:GetFullName())
+end
+
+-- Fallback: pakai remote upvalue milik Refs.SetTile. Ini kemungkinan remote
+-- yang benar karena fungsinya mengubah tile. Format argumen menyesuaikan
+-- Refs.SetTile: (layer, x, y, id, ...). Paling tidak kita coba FireServer.
+if not SetTileRemote and #Refs.SetTileRemotes > 0 then
+	SetTileRemote = Refs.SetTileRemotes[1]
+	print("[GrowBlox] SetTileRemote fallback ke upvalue SetTile: " .. SetTileRemote:GetFullName())
+end
+
+if not SetTileRemote and #Refs.PunchRemotes > 0 then
+	SetTileRemote = Refs.PunchRemotes[1]
+	print("[GrowBlox] SetTileRemote fallback ke upvalue Punch: " .. SetTileRemote:GetFullName())
 end
 
 print("[GrowBlox] NetOk=" .. tostring(NetOk) .. " Shared=" .. tostring(Shared ~= nil) .. " SetTileRemote=" .. tostring(SetTileRemote ~= nil))
