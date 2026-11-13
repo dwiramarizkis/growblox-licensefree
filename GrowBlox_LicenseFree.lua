@@ -960,18 +960,18 @@ local function createGui()
 
 	-- Grid 5x5 tombol
 	local gridButtons = {}
-	local cellSize = 32
+	local cellSize = 34
 	for row = 0, 4 do
 		for col = 0, 4 do
 			local cell = Instance.new("TextButton")
 			cell.Size = UDim2.new(0, cellSize, 0, cellSize)
-			cell.Position = UDim2.new(0, 8 + col * (cellSize + 2), 0, 52 + row * (cellSize + 2))
+			cell.Position = UDim2.new(0, 8 + col * (cellSize + 2), 0, 54 + row * (cellSize + 2))
 			cell.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
 			cell.BorderSizePixel = 0
 			cell.Text = "?"
 			cell.TextColor3 = Color3.fromRGB(255, 255, 255)
 			cell.Font = Enum.Font.GothamBold
-			cell.TextSize = 9
+			cell.TextSize = 8
 			cell.Parent = gridPanel
 
 			local cCorner = Instance.new("UICorner")
@@ -1007,14 +1007,21 @@ local function createGui()
 						if cell then
 							local fg = tileAt("fg", tx, ty)
 							local selected = selectedTiles[tx .. "," .. ty] == true
-							if selected then
+							local isPlayer = (row == half and col == half)
+
+							if isPlayer then
+								cell.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+								cell.Text = "YOU"
+							elseif selected then
 								cell.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+								cell.Text = breakable(fg) and tostring(fg) or "S"
 							elseif breakable(fg) then
 								cell.BackgroundColor3 = Color3.fromRGB(80, 60, 30)
+								cell.Text = tostring(fg)
 							else
 								cell.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
+								cell.Text = "·"
 							end
-							cell.Text = (breakable(fg) and tostring(fg) or "0")
 						end
 					end
 				end
@@ -1022,7 +1029,7 @@ local function createGui()
 		end
 	end)
 
-	-- Klik sel grid: toggle pilih
+	-- Klik sel grid: toggle pilih (kecuali sel YOU di tengah)
 	for idx, cell in ipairs(gridButtons) do
 		cell.MouseButton1Click:Connect(function()
 			local px, py = getPlayerTile()
@@ -1030,6 +1037,9 @@ local function createGui()
 			local half = math.floor(CONFIG.gridSize / 2)
 			local row = math.floor((idx - 1) / 5)
 			local col = (idx - 1) % 5
+			if row == half and col == half then
+				return -- sel pemain tidak bisa dipilih
+			end
 			local tx = px - half + col
 			local ty = py - half + row
 			toggleTileSelection(tx, ty)
