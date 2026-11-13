@@ -459,6 +459,8 @@ end
 local function autoBreakOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
+
+	-- Target: tile terisi TERDEKAT (bukan asal ambil urutan).
 	local target = nil
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
 		if t.fg ~= 0 and breakable(t.fg) then
@@ -470,9 +472,14 @@ local function autoBreakOnce()
 			break
 		end
 	end
-	if not target then return false, "no breakable" end
+	if not target then
+		return false, "no breakable near " .. px .. "," .. py
+	end
 	local ok = punchTile(target.x, target.y)
-	return ok, ok and ("punch " .. target.x .. "," .. target.y) or "punch failed"
+	if ok then
+		return true, "punch " .. target.x .. "," .. target.y .. " id=" .. tostring(target.fg)
+	end
+	return false, "punch failed"
 end
 
 local function autoPlaceOnce()
@@ -501,10 +508,15 @@ local function autoPlantOnce()
 			break
 		end
 	end
-	if not target then return false, "no empty tile" end
+	if not target then
+		return false, "no empty tile near " .. px .. "," .. py
+	end
 	if invCount(CONFIG.plantId) <= 0 then return false, "no seed" end
 	local ok = placeTile("fg", target.x, target.y, CONFIG.plantId)
-	return ok, ok and ("plant " .. target.x .. "," .. target.y) or "plant failed"
+	if ok then
+		return true, "plant " .. target.x .. "," .. target.y
+	end
+	return false, "plant failed"
 end
 
 -- ===========================================================================
@@ -577,7 +589,14 @@ local function startLoop(name, enabled, action, waitTime)
 	task.spawn(function()
 		while running[name] do
 			if enabled() then
-				pcall(action)
+				local ok, a, b = pcall(action)
+				if not ok then
+					warn("[GrowBlox] loop " .. name .. " error: " .. tostring(a))
+				elseif a == false then
+					-- tidak ada target / aksi gagal; hening saja
+				else
+					print("[GrowBlox] " .. name .. " -> " .. tostring(a) .. " " .. tostring(b))
+				end
 			end
 			task.wait(waitTime or CONFIG.interval)
 		end
