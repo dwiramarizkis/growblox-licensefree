@@ -94,6 +94,7 @@ local CONFIG = {
 
 	range = 4,         -- jangkauan tile di sekitar pemain
 	interval = 0.25,   -- jeda antar aksi (detik)
+	punchCooldown = 1.2, -- jeda pukul ulang tile yang sama (detik)
 	mutePunch = true,
 	breakBackground = false,
 	walkSpeed = 16,
@@ -402,16 +403,21 @@ local function placeTile(layer, x, y, id)
 	if not sendSetTile(layer, x, y, id) then
 		return false
 	end
-	-- Update grid lokal supaya loop tidak place tile yang sama berulang.
-	local grid = Refs.World and Refs.World[layer]
-	if grid and grid[y] then
-		grid[y][x] = id
-	end
+	-- JANGAN update grid lokal. Biarkan server/game yang update.
 	-- JANGAN invRemove manual; biarkan server yang update inventory.
 	return true
 end
 
+local lastPunch = {}   -- [x,y] = clock
+
 local function punchTile(x, y)
+	local key = x .. "," .. y
+	local now = os.clock()
+	if lastPunch[key] and (now - lastPunch[key]) < CONFIG.punchCooldown then
+		return false, "cooldown"
+	end
+	lastPunch[key] = now
+
 	if Refs.Punch then
 		local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
 		if not ok then
@@ -478,9 +484,12 @@ local function autoBreakOnce()
 	if not target then
 		return false, "no breakable near " .. px .. "," .. py
 	end
-	local ok = punchTile(target.x, target.y)
+	local ok, reason = punchTile(target.x, target.y)
 	if ok then
 		return true, "punch " .. target.x .. "," .. target.y .. " id=" .. tostring(target.fg)
+	end
+	if reason == "cooldown" then
+		return false, "cooldown " .. target.x .. "," .. target.y
 	end
 	return false, "punch failed"
 end
