@@ -330,7 +330,8 @@ end
 local function getPlayerTile()
 	local s = getState()
 	if not s then return nil end
-	return math.floor(s.x + 0.5), math.floor(s.y - 0.475 + 0.5)
+	-- Persis rumus k.lua: tile kaki karakter, bukan pembulatan bebas.
+	return math.floor(s.x), math.floor(s.y - 0.475)
 end
 
 -- ===========================================================================
@@ -532,6 +533,32 @@ local function tilesAround(px, py, radius)
 		return a.x < b.x
 	end)
 	return out
+end
+
+-- Grid 5x5 di sekitar pemain: baris 1 = paling atas, kolom 1 = paling kiri.
+-- Format "row,col" dengan pemain di tengah (3,3).
+local function getGridAround(px, py, size)
+	size = size or CONFIG.gridSize
+	local half = math.floor(size / 2)
+	local cells = {}
+	for row = 1, size do
+		for col = 1, size do
+			local tx = px - half + (col - 1)
+			local ty = py - half + (row - 1)
+			local fg = tileAt("fg", tx, ty)
+			local bg = tileAt("bg", tx, ty)
+			cells[#cells + 1] = {
+				row = row,
+				col = col,
+				x = tx,
+				y = ty,
+				fg = fg,
+				bg = bg,
+				isPlayer = (row == half + 1 and col == half + 1),
+			}
+		end
+	end
+	return cells
 end
 
 -- ===========================================================================
@@ -996,32 +1023,25 @@ local function createGui()
 			gpInfo.Text = "Terpilih: " .. selectedCount .. " | Posisi: " .. (px and (px .. "," .. py) or "?")
 
 			if px then
-				local half = math.floor(CONFIG.gridSize / 2)
-				local idx = 1
-				for row = 0, 4 do
-					for col = 0, 4 do
-						local tx = px - half + col
-						local ty = py - half + row
-						local cell = gridButtons[idx]
-						idx += 1
-						if cell then
-							local fg = tileAt("fg", tx, ty)
-							local selected = selectedTiles[tx .. "," .. ty] == true
-							local isPlayer = (row == half and col == half)
+				local cells = getGridAround(px, py, 5)
+				for i, c in ipairs(cells) do
+					local cell = gridButtons[i]
+					if cell then
+						local fg = c.fg
+						local selected = selectedTiles[c.x .. "," .. c.y] == true
 
-							if isPlayer then
-								cell.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
-								cell.Text = "YOU"
-							elseif selected then
-								cell.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-								cell.Text = breakable(fg) and tostring(fg) or "S"
-							elseif breakable(fg) then
-								cell.BackgroundColor3 = Color3.fromRGB(80, 60, 30)
-								cell.Text = tostring(fg)
-							else
-								cell.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
-								cell.Text = "·"
-							end
+						if c.isPlayer then
+							cell.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+							cell.Text = "YOU"
+						elseif selected then
+							cell.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+							cell.Text = breakable(fg) and tostring(fg) or "S"
+						elseif breakable(fg) then
+							cell.BackgroundColor3 = Color3.fromRGB(80, 60, 30)
+							cell.Text = tostring(fg)
+						else
+							cell.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
+							cell.Text = "·"
 						end
 					end
 				end
@@ -1034,15 +1054,11 @@ local function createGui()
 		cell.MouseButton1Click:Connect(function()
 			local px, py = getPlayerTile()
 			if not px then return end
-			local half = math.floor(CONFIG.gridSize / 2)
-			local row = math.floor((idx - 1) / 5)
-			local col = (idx - 1) % 5
-			if row == half and col == half then
-				return -- sel pemain tidak bisa dipilih
+			local cells = getGridAround(px, py, 5)
+			local c = cells[idx]
+			if c and not c.isPlayer then
+				toggleTileSelection(c.x, c.y)
 			end
-			local tx = px - half + col
-			local ty = py - half + row
-			toggleTileSelection(tx, ty)
 		end)
 	end
 
