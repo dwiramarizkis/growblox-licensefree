@@ -277,38 +277,71 @@ local punchHooks = {}
 local placeHooks = {}
 local tileHooks = {}
 
+-- Dapatkan sumber fungsi tanpa wajib debug.getinfo.
+local function fnSource(f)
+	if getinfo then
+		local ok, src = pcall(getinfo, f, "s")
+		if ok and type(src) == "string" and src ~= "" then
+			return tostring(src)
+		end
+	end
+	return "?"
+end
+
+-- Daftar konstanta unik (dibatasi) untuk ditampilkan.
+local function constPreview(f, limit)
+	limit = limit or 12
+	if not getconsts then return "" end
+	local ok, consts = pcall(getconsts, f)
+	if not ok or type(consts) ~= "table" then return "" end
+	local seen = {}
+	local out = {}
+	for _, c in ipairs(consts) do
+		if type(c) == "string" and #c < 40 and not seen[c] then
+			seen[c] = true
+			out[#out + 1] = c
+			if #out >= limit then break end
+		end
+	end
+	return table.concat(out, " | ")
+end
+
 if getgc then
-	for _, v in ipairs(getgc(true)) do
+	local scanned = 0
+	local list = getgc(true)
+	for _, v in ipairs(list) do
 		if type(v) == "function" then
-			local ok, src = pcall(getinfo, v, "s")
-			if ok and type(src) == "string" and src ~= "" and not src:find("GrowBlox_Probe", 1, true) then
-				if #punchHooks < 6 and (hasConst(v, "punchEvent") or hasConstPair(v, "punch", "punch_miss") or hasConstPair(v, "punch", "newCrack") or hasConstPair(v, "punch", "HarvestProvider")) then
-					table.insert(punchHooks, { fn = v, src = tostring(src) })
-				end
-				if #placeHooks < 6 and (hasConstPair(v, "placedAt", "flips") or hasConstPair(v, "cant_place_tile", "placedAt") or hasConstPair(v, "cant_place_tile", "flips")) then
-					table.insert(placeHooks, { fn = v, src = tostring(src) })
-				end
-				if #tileHooks < 6 and (hasConst(v, "tileChanged") or hasConst(v, "tile_removed")) then
-					table.insert(tileHooks, { fn = v, src = tostring(src) })
-				end
+			scanned = scanned + 1
+			if #punchHooks < 8 and (hasConst(v, "punchEvent") or hasConstPair(v, "punch", "punch_miss") or hasConstPair(v, "punch", "newCrack") or hasConstPair(v, "punch", "HarvestProvider")) then
+				table.insert(punchHooks, { fn = v, src = fnSource(v), consts = constPreview(v) })
+			end
+			if #placeHooks < 8 and (hasConstPair(v, "placedAt", "flips") or hasConstPair(v, "cant_place_tile", "placedAt") or hasConstPair(v, "cant_place_tile", "flips")) then
+				table.insert(placeHooks, { fn = v, src = fnSource(v), consts = constPreview(v) })
+			end
+			if #tileHooks < 8 and (hasConst(v, "tileChanged") or hasConst(v, "tile_removed")) then
+				table.insert(tileHooks, { fn = v, src = fnSource(v), consts = constPreview(v) })
 			end
 		end
 	end
+	add("GC functions scanned", tostring(scanned))
 end
 
 add("Punch candidates", tostring(#punchHooks))
 for i, h in ipairs(punchHooks) do
 	add("Punch" .. i, h.src)
+	add("Punch" .. i .. ".const", h.consts)
 	safeHook(h.fn, "PUNCH" .. i)
 end
 add("Place candidates", tostring(#placeHooks))
 for i, h in ipairs(placeHooks) do
 	add("Place" .. i, h.src)
+	add("Place" .. i .. ".const", h.consts)
 	safeHook(h.fn, "PLACE" .. i)
 end
 add("Tile candidates", tostring(#tileHooks))
 for i, h in ipairs(tileHooks) do
 	add("Tile" .. i, h.src)
+	add("Tile" .. i .. ".const", h.consts)
 	safeHook(h.fn, "TILE" .. i)
 end
 
