@@ -541,13 +541,16 @@ local function autoBreakOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
 
-	-- Target: tile terisi TERDEKAT (bukan asal ambil urutan).
-	-- Hanya tile fg di baris sekitar karakter (bukan background).
+	-- Cari tile terisi terdekat yang BELUM dalam cooldown.
 	local target = nil
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
 		if breakable(t.fg) then
-			target = t
-			break
+			local key = t.x .. "," .. t.y
+			local now = os.clock()
+			if not lastPunch[key] or (now - lastPunch[key]) >= CONFIG.punchCooldown then
+				target = t
+				break
+			end
 		end
 	end
 	if not target then
@@ -557,10 +560,7 @@ local function autoBreakOnce()
 	if ok then
 		return true, "punch " .. target.x .. "," .. target.y .. " id=" .. tostring(target.fg)
 	end
-	if reason == "cooldown" then
-		return false, "cooldown " .. target.x .. "," .. target.y
-	end
-	return false, "punch failed"
+	return false, "punch failed: " .. tostring(reason)
 end
 
 local function autoPlaceOnce()
@@ -694,7 +694,7 @@ local function startLoop(name, enabled, action, waitTime)
 				if not ok then
 					warn("[GrowBlox] loop " .. name .. " error: " .. tostring(a))
 				elseif a == false then
-					-- tidak ada target / aksi gagal; hening saja
+					-- hening untuk aksi "tidak ada target" agar console tidak banjir
 				else
 					print("[GrowBlox] " .. name .. " -> " .. tostring(a) .. " " .. tostring(b))
 				end
