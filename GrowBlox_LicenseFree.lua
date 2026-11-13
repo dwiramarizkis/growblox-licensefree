@@ -1,12 +1,10 @@
--- GrowBlox License-Free v2
--- Dibangun dari data asli game Growblox (bukan tebakan):
---   - World grid : world.fg[y][x], world.bg[y][x]
---   - State      : state().x, state().y, state().facing
---   - Inventory  : inv.slots = { {id=..., n=...}, ... }, inv:remove(id, n)
---   - Place      : SetTile("fg"/"bg", x, y, id, false, false)
---   - Punch      : Punch(x, y, mute, nil)
---   - Item ID    : 20 = Dirt, 696 = Dirt Seed, 2 = Lava Seed, 5 = Rock Seed
--- Tanpa key, HWID, akun, atau server lisensi.
+-- GrowBlox License-Free v3
+-- Logika mengikuti k.lua (Syigrow) untuk game Growblox:
+--   - Gerakan : hook WorldMenu.isDown + AutoInput (kiri/kanan/lompat)
+--   - Place   : Refs.SetTile(layer, x, y, id, false, false) + Refs.Inv:remove(id, 1)
+--   - Break   : Refs.Punch(x, y, mute, nil)
+--   - Grid    : pilih tile relatif terhadap posisi pemain (5x5, pemain di tengah)
+-- Tanpa key/HWID/server lisensi.
 
 repeat task.wait() until game:IsLoaded()
 
@@ -15,6 +13,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UIS = game:GetService("UserInputService")
 local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
 
 local function globalFn(name)
 	local ok, f = pcall(function()
@@ -29,96 +28,47 @@ local function globalFn(name)
 end
 
 local getgc = globalFn("getgc")
-local getconsts = globalFn("getconstants")
-if not getconsts and type(debug) == "table" then
-	pcall(function() getconsts = debug.getconstants end)
-end
+local getconsts = globalFn("getconstants") or (type(debug) == "table" and debug.getconstants) or nil
 
 print("[GrowBlox] executor: getgc=" .. tostring(getgc ~= nil) .. " getconstants=" .. tostring(getconsts ~= nil))
 
--- Modul game (fallback aman; tidak pakai WaitForChild yang bisa infinite yield)
-local Shared = ReplicatedStorage:FindFirstChild("Shared")
-local WorldRemotes = ReplicatedStorage:FindFirstChild("WorldRemotes")
-local SetTileRemote = WorldRemotes and WorldRemotes:FindFirstChild("SetTile")
-
-local ItemDB = nil
-local InventoryModule = nil
-local NetOk, Net = false, nil
-
-if Shared then
-	pcall(function()
-		ItemDB = require(Shared:FindFirstChild("ItemDB"))
-	end)
-	pcall(function()
-		InventoryModule = require(Shared:FindFirstChild("Inventory"))
-	end)
-	pcall(function()
-		NetOk, Net = pcall(require, Shared:FindFirstChild("Net"))
-	end)
-end
-
--- Kalau Shared belum ada, coba sekali dengan timeout 10 detik
-if not Shared then
-	local waited = 0
-	while waited < 10 do
-		Shared = ReplicatedStorage:FindFirstChild("Shared")
-		if Shared then break end
-		task.wait(0.5)
-		waited += 0.5
-	end
-	if Shared then
-		pcall(function()
-			ItemDB = require(Shared:FindFirstChild("ItemDB"))
-		end)
-		pcall(function()
-			InventoryModule = require(Shared:FindFirstChild("Inventory"))
-		end)
-		pcall(function()
-			NetOk, Net = pcall(require, Shared:FindFirstChild("Net"))
-		end)
-	end
-end
-
 -- ===========================================================================
--- 1. Konfigurasi
+-- Konfigurasi
 -- ===========================================================================
 local CONFIG = {
 	autoBreak = true,
 	autoPlace = false,
 	autoPlant = true,
-	pnbEnabled = false,  -- Place 'n Break grid mode
+	pnbEnabled = false,
 
-	-- Item untuk place dan tanam
-	placeId = 20,      -- Dirt
-	plantId = 696,     -- Dirt Seed
+	placeId = 20,       -- Dirt
+	plantId = 696,      -- Dirt Seed
 
-	range = 4,         -- jangkauan tile di sekitar pemain
-	interval = 0.25,   -- jeda antar aksi (detik)
-	punchCooldown = 1.2, -- jeda pukul ulang tile yang sama (detik)
+	range = 4,
+	interval = 0.25,
+	breakMs = 220,      -- jeda tiap pukulan (ms), seperti k.lua
+	afterBreakMs = 300, -- jeda setelah hancur
+	punchCooldown = 0.22,
 	mutePunch = true,
-	breakBackground = false,
-	walkSpeed = 16,
 
-	-- Grid PNB
-	gridSize = 5,           -- 5x5 di sekitar pemain
-	pnbInterval = 0.15,     -- jeda antar aksi PNB
-	pnbBreakOccupied = true,  -- pecahkan tile terisi di sel terpilih
-	pnbPlaceEmpty = true,     -- isi tile kosong di sel terpilih
+	gridSize = 5,
+	pnbInterval = 0.15,
+	pnbBreakOccupied = true,
+	pnbPlaceEmpty = true,
 }
 
--- Sel grid terpilih: map "x,y" -> true
-local selectedTiles = {}
-local gridTiles = {}   -- cache posisi grid terakhir
+local selectedTiles = {} -- "x,y" -> true (absolut)
+local gridTiles = {}
 
 -- ===========================================================================
--- 2. Temukan referensi game (sekali jalan, pola terbukti)
+-- Referensi game
 -- ===========================================================================
 local Refs = {
-	World = nil,   -- tabel {fg=..., bg=..., w=..., h=...}
-	State = nil,   -- fungsi () -> {x, y, facing, ...}
-	Inv = nil,     -- tabel {slots=..., count=fn, remove=fn}
-	SetTile = nil, -- fungsi (layer, x, y, id, flip, ...)
-	Punch = nil,   -- fungsi (x, y, mute, ...)
+	World = nil,
+	State = nil,
+	Inv = nil,
+	SetTile = nil,
+	Punch = nil,
 }
 
 local function isWorldTbl(v)
@@ -130,7 +80,6 @@ end
 local function isInvTbl(v)
 	return type(rawget(v, "slots")) == "table"
 		and (rawget(v, "capacity") ~= nil or type(rawget(v, "count")) == "function")
-		and (not InventoryModule or getmetatable(v) == InventoryModule)
 end
 
 local function isStateHolder(v)
@@ -141,178 +90,162 @@ local function isStateHolder(v)
 		and s.facing ~= nil and s.vx ~= nil
 end
 
-local function constsOf(fn)
+local function fnConsts(fn)
 	if not getconsts then return nil end
 	local ok, c = pcall(getconsts, fn)
 	if ok and type(c) == "table" then return c end
 	return nil
 end
 
-local function hasConst(fn, target)
-	local c = constsOf(fn)
+local function hasConsts(fn, ...)
+	local c = fnConsts(fn)
 	if not c then return false end
-	for _, v in ipairs(c) do
-		if v == target then return true end
-	end
-	return false
-end
-
-local function hasConstPair(fn, a, b)
-	local c = constsOf(fn)
-	if not c then return false end
-	local ha, hb = false, false
-	for _, v in ipairs(c) do
-		if v == a then ha = true end
-		if v == b then hb = true end
-		if ha and hb then return true end
-	end
-	return false
-end
-
--- Deteksi SetTile: beberapa pola, karena versi game bisa beda.
-local function isSetTileFn(fn)
-	if not getconsts then return false end
-	local ok, consts = pcall(getconsts, fn)
-	if not ok or type(consts) ~= "table" then return false end
-
-	-- Pola k.lua asli
-	local hasSend, hasPlaced, hasFlips = false, false, false
-	for _, c in pairs(consts) do
-		if c == "tile" or c == "SetTile" then hasSend = true
-		elseif c == "placedAt" then hasPlaced = true
-		elseif c == "flips" then hasFlips = true end
-	end
-	if hasSend and hasPlaced and hasFlips then return true end
-
-	-- Pola Growblox: fungsi tileChanged dengan layer/bg/fg/x/y/id/flip
-	local hasTileChanged, hasLayer, hasFlip = false, false, false
-	for _, c in pairs(consts) do
-		if c == "tileChanged" then hasTileChanged = true
-		elseif c == "layer" then hasLayer = true
-		elseif c == "flip" then hasFlip = true end
-	end
-	return hasTileChanged and hasLayer and hasFlip
-end
-
--- Deteksi Punch: beberapa pola.
-local function isPunchFn(fn)
-	if not getconsts then return false end
-	local ok, consts = pcall(getconsts, fn)
-	if not ok or type(consts) ~= "table" then return false end
-
-	-- Pola k.lua asli
-	local hasVend, hasMark = false, false
-	for _, c in pairs(consts) do
-		if c == "Empty the Vending Machine first!" then hasVend = true
-		elseif c == "newCrack" or c == "HarvestProvider" then hasMark = true end
-	end
-	if hasVend and hasMark then return true end
-
-	-- Pola Growblox 1: punchEvent + punch_miss
-	local hasPunchEvent, hasPunchMiss = false, false
-	for _, c in pairs(consts) do
-		if c == "punchEvent" then hasPunchEvent = true
-		elseif c == "punch_miss" then hasPunchMiss = true end
-	end
-	if hasPunchEvent and hasPunchMiss then return true end
-
-	-- Pola Growblox 2: punchCount + Punch + punchFx
-	local hasPunchCount, hasPunch, hasPunchFx = false, false, false
-	for _, c in pairs(consts) do
-		if c == "punchCount" then hasPunchCount = true
-		elseif c == "Punch" then hasPunch = true
-		elseif c == "punchFx" then hasPunchFx = true end
-	end
-	return hasPunchCount and hasPunch and hasPunchFx
-end
-
--- Pastikan fungsi milik game, bukan script ini (persis k.lua)
-local function isGameFn(fn)
-	if fn == isSetTileFn or fn == isPunchFn then return false end
-	local isExecClosure = globalFn("isexecutorclosure")
-	if isExecClosure then
-		local ok, res = pcall(isExecClosure, fn)
-		if ok and res then return false end
-	end
-	if type(debug) == "table" and debug.info then
-		local ok, src = pcall(debug.info, fn, "s")
-		if ok and type(src) == "string" and src ~= "" and not string.find(src, "GrowBlox", 1, true) then
-			return false
+	for _, want in ipairs({ ... }) do
+		local found = false
+		for _, v in pairs(c) do
+			if v == want then found = true break end
 		end
+		if not found then return false end
 	end
 	return true
 end
 
+local function isSetTileFn(fn)
+	if not getconsts then return false end
+	local c = fnConsts(fn)
+	if not c then return false end
+	local hasSend, hasPlaced, hasFlips = false, false, false
+	for _, v in pairs(c) do
+		if v == "tile" or v == "SetTile" then hasSend = true
+		elseif v == "placedAt" then hasPlaced = true
+		elseif v == "flips" then hasFlips = true end
+	end
+	if hasSend and hasPlaced and hasFlips then return true end
+	return hasConsts(fn, "tileChanged", "layer", "flip")
+end
+
+local function isPunchFn(fn)
+	if not getconsts then return false end
+	if hasConsts(fn, "Empty the Vending Machine first!", "newCrack")
+		or hasConsts(fn, "Empty the Vending Machine first!", "HarvestProvider")
+		or hasConsts(fn, "punchEvent", "punch_miss")
+		or hasConsts(fn, "punchCount", "Punch", "punchFx") then
+		return true
+	end
+	return false
+end
+
 local function scanRefs()
-	if not getgc then
-		print("[GrowBlox] scanRefs: getgc nil")
-		return false
-	end
-	local okList, all = pcall(getgc, true)
-	if not okList or type(all) ~= "table" then
-		print("[GrowBlox] scanRefs: getgc(true) gagal: " .. tostring(all))
-		return false
-	end
-	print("[GrowBlox] scanRefs: getgc objects=" .. tostring(#all))
-
-	-- Cari fungsi kandidat punch/settile apa pun, catat konstanta untuk debugging.
+	if not getgc then return false end
+	local ok, all = pcall(getgc, true)
+	if not ok or type(all) ~= "table" then return false end
 	local punchSeen, settileSeen = {}, {}
-
 	for _, v in ipairs(all) do
 		if type(v) == "table" then
 			if not Refs.World then
-				local ok, isW = pcall(isWorldTbl, v)
-				if ok and isW then Refs.World = v end
+				local okW, isW = pcall(isWorldTbl, v)
+				if okW and isW then Refs.World = v end
 			end
 			if not Refs.Inv then
-				local ok, isI = pcall(isInvTbl, v)
-				if ok and isI then Refs.Inv = v end
+				local okI, isI = pcall(isInvTbl, v)
+				if okI and isI then Refs.Inv = v end
 			end
 			if not Refs.State then
-				local ok, isS = pcall(isStateHolder, v)
-				if ok and isS then Refs.State = rawget(v, "state") end
+				local okS, isS = pcall(isStateHolder, v)
+				if okS and isS then Refs.State = rawget(v, "state") end
 			end
 		elseif type(v) == "function" then
-			-- Kumpulkan kandidat terlebih dahulu (hindari menetapkan fungsi yang salah terlalu dini)
-			if isSetTileFn(v) then
-				settileSeen[#settileSeen + 1] = v
-			end
-			if isPunchFn(v) then
-				punchSeen[#punchSeen + 1] = v
-			end
+			if isSetTileFn(v) then settileSeen[#settileSeen + 1] = v end
+			if isPunchFn(v) then punchSeen[#punchSeen + 1] = v end
 		end
 	end
-
-	-- Pilih kandidat yang paling mungkin
-	if #settileSeen > 0 then
-		Refs.SetTile = settileSeen[1]
-		print("[GrowBlox] SetTile kandidat: " .. #settileSeen)
-	end
-	if #punchSeen > 0 then
-		Refs.Punch = punchSeen[1]
-		print("[GrowBlox] Punch kandidat: " .. #punchSeen)
-	end
-
+	Refs.SetTile = settileSeen[1]
+	Refs.Punch = punchSeen[1]
+	print(string.format("[GrowBlox] refs: world=%s state=%s inv=%s settile=%s punch=%s",
+		tostring(Refs.World ~= nil),
+		tostring(Refs.State ~= nil),
+		tostring(Refs.Inv ~= nil),
+		tostring(Refs.SetTile ~= nil),
+		tostring(Refs.Punch ~= nil)))
 	return Refs.World ~= nil
 end
 
-local refsOk = scanRefs()
-print("[GrowBlox] refs: world=" .. tostring(Refs.World ~= nil)
-	.. " state=" .. tostring(Refs.State ~= nil)
-	.. " inv=" .. tostring(Refs.Inv ~= nil)
-	.. " settile=" .. tostring(Refs.SetTile ~= nil)
-	.. " punch=" .. tostring(Refs.Punch ~= nil))
+scanRefs()
 
 -- ===========================================================================
--- 3. Helper data game
+-- Modul game (seperti k.lua)
 -- ===========================================================================
-local function getState()
+local Shared = ReplicatedStorage:FindFirstChild("Shared")
+local WorldRemotes = ReplicatedStorage:FindFirstChild("WorldRemotes")
+local SetTileRemote = WorldRemotes and WorldRemotes:FindFirstChild("SetTile")
+
+local ItemDB = nil
+local InventoryModule = nil
+local NetOk, Net = false, nil
+
+if Shared then
+	pcall(function() ItemDB = require(Shared:FindFirstChild("ItemDB")) end)
+	pcall(function() InventoryModule = require(Shared:FindFirstChild("Inventory")) end)
+	pcall(function() NetOk, Net = pcall(require, Shared:FindFirstChild("Net")) end)
+end
+
+-- WorldMenu module untuk hook gerakan (k.lua)
+local MenuModule = nil
+local MenuModOk = false
+pcall(function()
+	local GameGui = PlayerGui:FindFirstChild("GameGui") or PlayerGui:WaitForChild("GameGui", 5)
+	if GameGui then
+		local wm = GameGui:FindFirstChild("WorldMenu")
+		if wm and wm:IsA("ModuleScript") then
+			MenuModOk, MenuModule = pcall(require, wm)
+		end
+	end
+end)
+
+-- ===========================================================================
+-- AutoInput + hook isDown (logika persis k.lua)
+-- ===========================================================================
+local AutoInput = { active = false, left = false, right = false, jump = false, down = false }
+local OrigIsDown = nil
+
+local function isDownWrapper(saved, key, ...)
+	if AutoInput.active then
+		if key == "keyLeft" then return AutoInput.left end
+		if key == "keyRight" then return AutoInput.right end
+		if key == "keyJump" then return AutoInput.jump end
+		if key == "keyDown" then return AutoInput.down end
+	end
+	return OrigIsDown(saved, key, ...)
+end
+
+if MenuModOk and type(MenuModule) == "table" and type(rawget(MenuModule, "isDown")) == "function" then
+	OrigIsDown = rawget(MenuModule, "isDown")
+	MenuModule.isDown = isDownWrapper
+	print("[GrowBlox] WorldMenu.isDown hooked")
+else
+	print("[GrowBlox] WorldMenu.isDown TIDAK ditemukan, gerakan auto mati")
+end
+
+local function releaseInput()
+	AutoInput.left, AutoInput.right, AutoInput.jump, AutoInput.down = false, false, false, false
+end
+
+-- ===========================================================================
+-- Helper data game
+-- ===========================================================================
+local function playerState()
 	if not Refs.State then return nil end
 	local ok, s = pcall(Refs.State)
-	if ok and type(s) == "table" and type(s.x) == "number" then
+	if ok and type(s) == "table" and type(s.x) == "number" and type(s.y) == "number" and s.active ~= false then
 		return s
 	end
 	return nil
+end
+
+local function getPlayerTile()
+	local s = playerState()
+	if not s then return nil end
+	return math.floor(s.x), math.floor(s.y - 0.475)
 end
 
 local function tileAt(layer, x, y)
@@ -323,73 +256,18 @@ local function tileAt(layer, x, y)
 	return row and (row[x] or 0) or nil
 end
 
-local function isGroundY(y)
-	return y >= Refs.World.h - 3
-end
-
-local function getPlayerTile()
-	local s = getState()
-	if not s then return nil end
-	-- Persis rumus k.lua: tile kaki karakter, bukan pembulatan bebas.
-	return math.floor(s.x), math.floor(s.y - 0.475)
-end
-
--- ===========================================================================
--- 3b. Gerakan karakter via input internal game
--- ===========================================================================
--- Game Growblox membaca input keyboard/UI internal, bukan Humanoid.
--- Kita coba dua cara:
---   1) ContextActionService / VirtualInputManager
---   2) Langsung ubah state (x/y) jika memungkinkan (biasanya read-only)
-local VirtualInputManager = nil
-pcall(function() VirtualInputManager = game:GetService("VirtualInputManager") end)
-local ContextActionService = nil
-pcall(function() ContextActionService = game:GetService("ContextActionService") end)
-
-local function keyDown(key)
-	if VirtualInputManager then
-		pcall(function()
-			VirtualInputManager:SendKeyEvent(true, key, false, nil)
-		end)
-	end
-end
-
-local function keyUp(key)
-	if VirtualInputManager then
-		pcall(function()
-			VirtualInputManager:SendKeyEvent(false, key, false, nil)
-		end)
-	end
-end
-
-local function moveLeft()
-	keyDown(Enum.KeyCode.A)
-	keyDown(Enum.KeyCode.Left)
-end
-
-local function moveRight()
-	keyDown(Enum.KeyCode.D)
-	keyDown(Enum.KeyCode.Right)
-end
-
-local function moveJump()
-	keyDown(Enum.KeyCode.Space)
-	keyDown(Enum.KeyCode.W)
-	keyDown(Enum.KeyCode.Up)
-end
-
-local function moveStop()
-	keyUp(Enum.KeyCode.A)
-	keyUp(Enum.KeyCode.D)
-	keyUp(Enum.KeyCode.Left)
-	keyUp(Enum.KeyCode.Right)
-	keyUp(Enum.KeyCode.Space)
-	keyUp(Enum.KeyCode.W)
-	keyUp(Enum.KeyCode.Up)
+local function fgIdAt(x, y)
+	local w = Refs.World
+	local row = w and w.fg[y]
+	return (row and row[x]) or 0
 end
 
 local function invCount(id)
 	if not Refs.Inv then return 0 end
+	if type(Refs.Inv.count) == "function" then
+		local ok, n = pcall(function() return Refs.Inv:count(id) end)
+		if ok then return n end
+	end
 	for _, slot in ipairs(Refs.Inv.slots or {}) do
 		if type(slot) == "table" and slot.id == id then
 			return slot.n or 0
@@ -398,41 +276,25 @@ local function invCount(id)
 	return 0
 end
 
--- Tampilkan isi inventory di console (untuk debug)
-local function debugInventory()
-	if not Refs.Inv then
-		print("[GrowBlox] Inventory: TIDAK ADA")
-		return
-	end
-	local slots = Refs.Inv.slots or {}
-	print("[GrowBlox] Inventory slots=" .. tostring(#slots))
-	for i, slot in ipairs(slots) do
-		if type(slot) == "table" then
-			print("[GrowBlox]   slot" .. i .. " id=" .. tostring(slot.id) .. " n=" .. tostring(slot.n))
-		end
-	end
-end
-
 local function invRemove(id, n)
-	if not Refs.Inv then return false end
-	if type(Refs.Inv.remove) == "function" then
-		local ok = pcall(function()
-			Refs.Inv:remove(id, n or 1)
-		end)
-		return ok
-	end
-	return false
+	if not Refs.Inv or type(Refs.Inv.remove) ~= "function" then return false end
+	local ok = pcall(function() Refs.Inv:remove(id, n or 1) end)
+	return ok
+end
+
+local function breakable(id)
+	return type(id) == "number" and id > 0
 end
 
 -- ===========================================================================
--- 4. Aksi dasar game
+-- Aksi dasar (persis k.lua)
 -- ===========================================================================
--- Prioritas pengiriman ke server:
---   1. ByteNet Net.tile.send (server-authoritative, sama seperti k.lua)
---   2. Remote lama SetTileRemote:FireServer
---   3. Refs.SetTile (hanya visual client, JANGAN diandalkan)
 local function sendSetTile(layer, x, y, id)
-	-- 1. ByteNet
+	if Refs.SetTile then
+		local ok, err = pcall(Refs.SetTile, layer, x, y, id, false, false)
+		if ok then return true end
+		warn("[GrowBlox] setTile gagal: " .. tostring(err))
+	end
 	if NetOk and type(Net) == "table" and type(Net.tile) == "table" then
 		local ok = pcall(Net.tile.send, {
 			layer = (layer == "bg") and 2 or 1,
@@ -441,73 +303,174 @@ local function sendSetTile(layer, x, y, id)
 			id = id,
 			flip = false,
 		})
-		if ok then
-			return true
-		end
-		warn("[GrowBlox] ByteNet tile send gagal")
-	end
-
-	-- 2. Remote lama
-	if SetTileRemote then
-		local ok = pcall(function()
-			SetTileRemote:FireServer(layer, x, y, id, false)
-		end)
-		if ok then
-			return true
-		end
-		warn("[GrowBlox] SetTileRemote gagal")
-	end
-
-	-- 3. SetTile client (visual saja - terakhir)
-	if Refs.SetTile then
-		local ok = pcall(Refs.SetTile, layer, x, y, id, false, false)
-		if ok then
-			warn("[GrowBlox] WARNING: hanya pakai SetTile visual, server mungkin tidak terima")
-			return true
-		end
+		if ok then return true end
+	elseif SetTileRemote then
+		pcall(function() SetTileRemote:FireServer(layer, x, y, id, false) end)
+		return true
 	end
 	return false
 end
 
-local function placeTile(layer, x, y, id)
-	if not sendSetTile(layer, x, y, id) then
-		return false
-	end
-	-- JANGAN update grid lokal. Biarkan server/game yang update.
-	-- JANGAN invRemove manual; biarkan server yang update inventory.
-	return true
+local function tryPlace(x, y, id)
+	if not id or invCount(id) <= 0 then return "habis" end
+	if fgIdAt(x, y) ~= 0 then return nil end
+	if not sendSetTile("fg", x, y, id) then return nil end
+	invRemove(id, 1) -- persis k.lua
+	return "place"
 end
 
-local lastPunch = {}   -- [x,y] = clock
+local lastPunch = {}
 
-local function punchTile(x, y)
+local function tryBreak(x, y)
 	local key = x .. "," .. y
 	local now = os.clock()
 	if lastPunch[key] and (now - lastPunch[key]) < CONFIG.punchCooldown then
-		return false, "cooldown"
+		return "cooldown"
 	end
 	lastPunch[key] = now
 
+	local id = fgIdAt(x, y)
+	if not breakable(id) then return nil end
+
 	if Refs.Punch then
 		local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
-		if not ok then
-			warn("[GrowBlox] punch error: " .. tostring(err))
-		else
-			return true
+		if ok then
+			if fgIdAt(x, y) ~= id then
+				return "broke"
+			end
+			return "hit"
 		end
+		warn("[GrowBlox] punch error: " .. tostring(err))
 	end
 
-	-- Fallback: kirim tile kosong via jalur server (ByteNet/remote)
-	warn("[GrowBlox] Punch gagal/tidak ada, fallback tile id=0 via server")
-	return sendSetTile("fg", x, y, 0)
-end
-
-local function breakable(id)
-	return type(id) == "number" and id > 0
+	-- Fallback: set tile 0 (server-authoritative)
+	if sendSetTile("fg", x, y, 0) then
+		return "broke"
+	end
+	return nil
 end
 
 -- ===========================================================================
--- 5. Scan tile di sekitar pemain
+-- Gerakan otomatis (steerX + execWalk dari k.lua, disederhanakan)
+-- ===========================================================================
+local function autoOn()
+	return true
+end
+
+local function frame()
+	task.wait()
+	return autoOn()
+end
+
+local function waitAuto(ms)
+	task.wait(math.max(ms or 0, 30) / 1000)
+	return autoOn()
+end
+
+local function steerX(s, targetX, tol)
+	local dx = targetX - s.x
+	local vx = s.vx or 0
+	local decel = s.grounded and 48 or 17
+	local dir = 0
+	if math.abs(dx) > tol then
+		dir = dx > 0 and 1 or -1
+		if vx * dir > 0 and (vx * vx) / (2 * decel) >= math.abs(dx) - tol * 0.5 then
+			dir = 0
+		end
+	end
+	AutoInput.left = dir < 0
+	AutoInput.right = dir > 0
+end
+
+local function execWalk(tx, ty)
+	if not OrigIsDown then return false end
+	local cx = tx + 0.5
+	local s0 = playerState()
+	if not s0 then return false end
+	local limit = 1.5 + math.abs(cx - s0.x) * 0.35
+	local t0 = os.clock()
+	AutoInput.active = true
+	while frame() do
+		local s = playerState()
+		if not s or s.dead then releaseInput(); return false end
+		local nx, ny = math.floor(s.x), math.floor(s.y - 0.475)
+		if s.grounded and ny ~= ty then releaseInput(); return false end
+		steerX(s, cx, 0.1)
+		if nx == tx and math.abs(s.x - cx) <= 0.2 and s.grounded and math.abs(s.vx or 0) < 2 then
+			releaseInput()
+			return true
+		end
+		if os.clock() - t0 > limit then releaseInput(); return false end
+	end
+	releaseInput()
+	return false
+end
+
+local function execJumpUp(tx, ty)
+	if not OrigIsDown then return false end
+	local cx = tx + 0.5
+	releaseInput()
+	AutoInput.active = true
+	AutoInput.jump = true
+	local t0 = os.clock()
+	local airborne = false
+	while frame() do
+		local s = playerState()
+		if not s or s.dead then releaseInput(); return false end
+		if not s.grounded then airborne = true end
+		if AutoInput.jump and (airborne and (s.vy or 0) >= 0) then
+			AutoInput.jump = false
+		end
+		steerX(s, cx, 0.1)
+		if airborne and s.grounded then
+			local nx, ny = math.floor(s.x), math.floor(s.y - 0.475)
+			if ny == ty then
+				if nx == tx and math.abs(s.x - cx) <= 0.25 then
+					releaseInput()
+					return true
+				end
+			else
+				releaseInput()
+				return false
+			end
+		end
+		if os.clock() - t0 > 1.8 then releaseInput(); return false end
+	end
+	releaseInput()
+	return false
+end
+
+-- Jalan menuju tile target (hanya 1 tile di atas/bawah, tanpa A*)
+local function walkTo(tx, ty, maxSec)
+	if not OrigIsDown then return false end
+	local s = playerState()
+	if not s then return false end
+	local nx, ny = getPlayerTile()
+	if not nx then return false end
+
+	AutoInput.active = true
+	local t0 = os.clock()
+	local ok = false
+
+	if ny == ty then
+		ok = execWalk(tx, ty)
+	elseif ty == ny - 1 then
+		-- Turun: jalan ke arah tx, jatuh
+		ok = execWalk(tx, ny)
+	elseif ty == ny + 1 then
+		-- Naik 1 tile
+		if execWalk(tx, ny) then
+			ok = execJumpUp(tx, ty)
+		end
+	end
+
+	AutoInput.active = false
+	releaseInput()
+	return ok
+end
+
+-- ===========================================================================
+-- Farm actions
 -- ===========================================================================
 local function tilesAround(px, py, radius)
 	local out = {}
@@ -515,13 +478,11 @@ local function tilesAround(px, py, radius)
 	for y = py - radius, py + radius do
 		for x = px - radius, px + radius do
 			local fg = tileAt("fg", x, y)
-			local bg = tileAt("bg", x, y)
 			if fg ~= nil then
 				out[#out + 1] = {
 					x = x,
 					y = y,
 					fg = fg,
-					bg = bg,
 					distance = math.abs(x - px) + math.abs(y - py),
 				}
 			end
@@ -535,40 +496,10 @@ local function tilesAround(px, py, radius)
 	return out
 end
 
--- Grid 5x5 di sekitar pemain: baris 1 = paling atas, kolom 1 = paling kiri.
--- Format "row,col" dengan pemain di tengah (3,3).
-local function getGridAround(px, py, size)
-	size = size or CONFIG.gridSize
-	local half = math.floor(size / 2)
-	local cells = {}
-	for row = 1, size do
-		for col = 1, size do
-			local tx = px - half + (col - 1)
-			local ty = py - half + (row - 1)
-			local fg = tileAt("fg", tx, ty)
-			local bg = tileAt("bg", tx, ty)
-			cells[#cells + 1] = {
-				row = row,
-				col = col,
-				x = tx,
-				y = ty,
-				fg = fg,
-				bg = bg,
-				isPlayer = (row == half + 1 and col == half + 1),
-			}
-		end
-	end
-	return cells
-end
-
--- ===========================================================================
--- 6. Aksi farming
--- ===========================================================================
 local function autoBreakOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
 
-	-- Cari tile terisi terdekat yang BELUM dalam cooldown.
 	local target = nil
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
 		if breakable(t.fg) then
@@ -580,19 +511,19 @@ local function autoBreakOnce()
 			end
 		end
 	end
-	if not target then
-		return false, "no breakable near " .. px .. "," .. py
+	if not target then return false, "no breakable" end
+
+	local r = tryBreak(target.x, target.y)
+	if r == "hit" or r == "broke" then
+		return true, "break " .. target.x .. "," .. target.y .. " id=" .. tostring(target.fg)
 	end
-	local ok, reason = punchTile(target.x, target.y)
-	if ok then
-		return true, "punch " .. target.x .. "," .. target.y .. " id=" .. tostring(target.fg)
-	end
-	return false, "punch failed: " .. tostring(reason)
+	return false, "break failed: " .. tostring(r)
 end
 
-local function autoPlaceOnce()
+local function autoPlantOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
+
 	local target = nil
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
 		if t.fg == 0 or t.fg == "" or t.fg == nil then
@@ -601,14 +532,18 @@ local function autoPlaceOnce()
 		end
 	end
 	if not target then return false, "no empty tile" end
-	if invCount(CONFIG.placeId) <= 0 then return false, "no block" end
-	local ok = placeTile("fg", target.x, target.y, CONFIG.placeId)
-	return ok, ok and ("place " .. target.x .. "," .. target.y) or "place failed"
+
+	local r = tryPlace(target.x, target.y, CONFIG.plantId)
+	if r == "place" then
+		return true, "plant " .. target.x .. "," .. target.y
+	end
+	return false, "plant failed: " .. tostring(r)
 end
 
-local function autoPlantOnce()
+local function autoPlaceOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
+
 	local target = nil
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
 		if t.fg == 0 or t.fg == "" or t.fg == nil then
@@ -616,81 +551,51 @@ local function autoPlantOnce()
 			break
 		end
 	end
-	if not target then
-		return false, "no empty tile near " .. px .. "," .. py
+	if not target then return false, "no empty tile" end
+
+	local r = tryPlace(target.x, target.y, CONFIG.placeId)
+	if r == "place" then
+		return true, "place " .. target.x .. "," .. target.y
 	end
-	if invCount(CONFIG.plantId) <= 0 then
-		-- Coba cari seed lain yang available (fallback)
-		local anySeed = nil
-		if Refs.Inv then
-			for _, slot in ipairs(Refs.Inv.slots or {}) do
-				if type(slot) == "table" and (slot.n or 0) > 0 then
-					-- Anggap item yang namanya mengandung "seed" di ItemDB
-					if ItemDB and ItemDB[slot.id] and tostring(ItemDB[slot.id].name):lower():find("seed") then
-						anySeed = slot.id
-						break
-					end
-				end
-			end
-		end
-		if anySeed then
-			CONFIG.plantId = anySeed
-			print("[GrowBlox] Mengganti plantId ke seed id=" .. tostring(anySeed))
-		else
-			return false, "no seed"
-		end
-	end
-	local ok = placeTile("fg", target.x, target.y, CONFIG.plantId)
-	if ok then
-		return true, "plant " .. target.x .. "," .. target.y .. " seed=" .. tostring(CONFIG.plantId)
-	end
-	return false, "plant failed"
+	return false, "place failed: " .. tostring(r)
 end
 
 -- ===========================================================================
--- 6b. Place 'n Break grid mode
+-- PNB grid mode
 -- ===========================================================================
 local function pnbTick()
-	if not CONFIG.pnbEnabled then
-		return false, "pnb off"
-	end
-
+	if not CONFIG.pnbEnabled then return false, "pnb off" end
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
 
-	-- Refresh cache grid
 	gridTiles = {}
-	for y = py - CONFIG.gridSize, py + CONFIG.gridSize do
-		for x = px - CONFIG.gridSize, px + CONFIG.gridSize do
-			local fg = tileAt("fg", x, y)
-			local bg = tileAt("bg", x, y)
+	local half = math.floor(CONFIG.gridSize / 2)
+	for row = 1, CONFIG.gridSize do
+		for col = 1, CONFIG.gridSize do
+			local tx = px - half + (col - 1)
+			local ty = py - half + (row - 1)
+			local fg = tileAt("fg", tx, ty)
 			if fg ~= nil then
-				gridTiles[#gridTiles + 1] = { x = x, y = y, fg = fg, bg = bg }
+				gridTiles[#gridTiles + 1] = { x = tx, y = ty, fg = fg }
 			end
 		end
 	end
 
-	-- Eksekusi pada sel terpilih saja
 	for _, t in ipairs(gridTiles) do
 		if selectedTiles[t.x .. "," .. t.y] then
 			if breakable(t.fg) and CONFIG.pnbBreakOccupied then
-				local ok = punchTile(t.x, t.y)
-				if ok then
+				local r = tryBreak(t.x, t.y)
+				if r == "hit" or r == "broke" then
 					return true, "pnb break " .. t.x .. "," .. t.y
 				end
 			elseif (t.fg == 0 or t.fg == "" or t.fg == nil) and CONFIG.pnbPlaceEmpty then
-				if invCount(CONFIG.placeId) > 0 then
-					local ok = placeTile("fg", t.x, t.y, CONFIG.placeId)
-					if ok then
-						return true, "pnb place " .. t.x .. "," .. t.y
-					end
-				else
-					return false, "no block"
+				local r = tryPlace(t.x, t.y, CONFIG.placeId)
+				if r == "place" then
+					return true, "pnb place " .. t.x .. "," .. t.y
 				end
 			end
 		end
 	end
-
 	return false, "no pnb action"
 end
 
@@ -709,7 +614,7 @@ local function clearTileSelection()
 end
 
 -- ===========================================================================
--- 7. Loop utama
+-- Loop utama
 -- ===========================================================================
 local running = { breakLoop = true, placeLoop = true, plantLoop = true, pnbLoop = true }
 
@@ -720,9 +625,7 @@ local function startLoop(name, enabled, action, waitTime)
 				local ok, a, b = pcall(action)
 				if not ok then
 					warn("[GrowBlox] loop " .. name .. " error: " .. tostring(a))
-				elseif a == false then
-					-- hening untuk aksi "tidak ada target" agar console tidak banjir
-				else
+				elseif a == true then
 					print("[GrowBlox] " .. name .. " -> " .. tostring(a) .. " " .. tostring(b))
 				end
 			end
@@ -731,13 +634,13 @@ local function startLoop(name, enabled, action, waitTime)
 	end)
 end
 
-startLoop("breakLoop", function() return CONFIG.autoBreak and not CONFIG.pnbEnabled end, autoBreakOnce)
+startLoop("breakLoop", function() return CONFIG.autoBreak and not CONFIG.pnbEnabled end, autoBreakOnce, CONFIG.breakMs / 1000)
 startLoop("placeLoop", function() return CONFIG.autoPlace and not CONFIG.pnbEnabled end, autoPlaceOnce)
 startLoop("plantLoop", function() return CONFIG.autoPlant and not CONFIG.pnbEnabled end, autoPlantOnce)
 startLoop("pnbLoop", function() return CONFIG.pnbEnabled end, pnbTick, CONFIG.pnbInterval)
 
 -- ===========================================================================
--- 8. GUI kecil (tidak menghalangi)
+-- GUI
 -- ===========================================================================
 local function notify(title, text, duration)
 	pcall(function()
@@ -747,23 +650,6 @@ local function notify(title, text, duration)
 			Duration = duration or 2,
 		})
 	end)
-end
-
--- Tombol debug: pindah kiri/kanan/lompat + cek inventory
-local function debugMove(direction)
-	if direction == "left" then
-		moveLeft()
-		task.wait(0.15)
-		moveStop()
-	elseif direction == "right" then
-		moveRight()
-		task.wait(0.15)
-		moveStop()
-	elseif direction == "jump" then
-		moveJump()
-		task.wait(0.15)
-		moveStop()
-	end
 end
 
 local ui = {}
@@ -783,7 +669,6 @@ local function createGui()
 		screenGui.Parent = parent
 	end)
 
-	-- Frame utama (kolom tombol)
 	local frame = Instance.new("Frame")
 	frame.Size = UDim2.new(0, 180, 0, 236)
 	frame.Position = UDim2.new(0.5, -90, 1, -240)
@@ -869,7 +754,6 @@ local function createGui()
 	addToggle("Auto Plant", "autoPlant", 98)
 	addToggle("PNB Grid", "pnbEnabled", 132)
 
-	-- Tombol buka grid PNB
 	local gridBtn = Instance.new("TextButton")
 	gridBtn.Size = UDim2.new(1, -16, 0, 30)
 	gridBtn.Position = UDim2.new(0, 8, 0, 166)
@@ -885,7 +769,7 @@ local function createGui()
 	gridCorner.CornerRadius = UDim.new(0, 5)
 	gridCorner.Parent = gridBtn
 
-	-- Tombol gerak debug
+	-- Tombol debug
 	local function addMoveButton(label, x, action)
 		local btn = Instance.new("TextButton")
 		btn.Size = UDim2.new(0, 42, 0, 24)
@@ -902,19 +786,32 @@ local function createGui()
 		c.CornerRadius = UDim.new(0, 4)
 		c.Parent = btn
 
-		btn.MouseButton1Click:Connect(function()
-			action()
-		end)
+		btn.MouseButton1Click:Connect(function() action() end)
 	end
 
-	addMoveButton("<", 8, function() debugMove("left") end)
-	addMoveButton(">", 56, function() debugMove("right") end)
-	addMoveButton("^", 104, function() debugMove("jump") end)
-	addMoveButton("INV", 152, function() debugInventory() end)
+	addMoveButton("<", 8, function()
+		AutoInput.active = true
+		AutoInput.left = true
+		task.wait(0.2)
+		releaseInput()
+		AutoInput.active = false
+	end)
+	addMoveButton(">", 56, function()
+		AutoInput.active = true
+		AutoInput.right = true
+		task.wait(0.2)
+		releaseInput()
+		AutoInput.active = false
+	end)
+	addMoveButton("^", 104, function()
+		AutoInput.active = true
+		AutoInput.jump = true
+		task.wait(0.15)
+		AutoInput.jump = false
+		AutoInput.active = false
+	end)
 
-	-- =====================================================================
-	-- Panel Grid PNB (5x5) terpisah, bisa digeser
-	-- =====================================================================
+	-- Panel grid PNB
 	local gridPanel = Instance.new("Frame")
 	gridPanel.Size = UDim2.new(0, 190, 0, 250)
 	gridPanel.Position = UDim2.new(0.5, -95, 0.5, -125)
@@ -981,11 +878,8 @@ local function createGui()
 	gpClearCorner.CornerRadius = UDim.new(0, 5)
 	gpClearCorner.Parent = gpClear
 
-	gpClear.MouseButton1Click:Connect(function()
-		clearTileSelection()
-	end)
+	gpClear.MouseButton1Click:Connect(function() clearTileSelection() end)
 
-	-- Grid 5x5 tombol
 	local gridButtons = {}
 	local cellSize = 34
 	for row = 0, 4 do
@@ -1009,39 +903,40 @@ local function createGui()
 		end
 	end
 
-	-- Perbarui tampilan grid tiap 0.3 detik
 	task.spawn(function()
 		while true do
 			task.wait(0.3)
 			if not gridPanel.Visible then continue end
-
 			local px, py = getPlayerTile()
 			local selectedCount = 0
-			for key in pairs(selectedTiles) do
-				selectedCount += 1
-			end
+			for _ in pairs(selectedTiles) do selectedCount += 1 end
 			gpInfo.Text = "Terpilih: " .. selectedCount .. " | Posisi: " .. (px and (px .. "," .. py) or "?")
 
 			if px then
-				local cells = getGridAround(px, py, 5)
-				for i, c in ipairs(cells) do
-					local cell = gridButtons[i]
-					if cell then
-						local fg = c.fg
-						local selected = selectedTiles[c.x .. "," .. c.y] == true
-
-						if c.isPlayer then
-							cell.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
-							cell.Text = "YOU"
-						elseif selected then
-							cell.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-							cell.Text = breakable(fg) and tostring(fg) or "S"
-						elseif breakable(fg) then
-							cell.BackgroundColor3 = Color3.fromRGB(80, 60, 30)
-							cell.Text = tostring(fg)
-						else
-							cell.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
-							cell.Text = "·"
+				local half = math.floor(CONFIG.gridSize / 2)
+				for row = 0, 4 do
+					for col = 0, 4 do
+						local tx = px - half + col
+						local ty = py - half + row
+						local idx = (row * 5) + col + 1
+						local cell = gridButtons[idx]
+						if cell then
+							local fg = tileAt("fg", tx, ty)
+							local selected = selectedTiles[tx .. "," .. ty] == true
+							local isPlayer = (row == half and col == half)
+							if isPlayer then
+								cell.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+								cell.Text = "YOU"
+							elseif selected then
+								cell.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+								cell.Text = breakable(fg) and tostring(fg) or "S"
+							elseif breakable(fg) then
+								cell.BackgroundColor3 = Color3.fromRGB(80, 60, 30)
+								cell.Text = tostring(fg)
+							else
+								cell.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
+								cell.Text = "."
+							end
 						end
 					end
 				end
@@ -1049,16 +944,17 @@ local function createGui()
 		end
 	end)
 
-	-- Klik sel grid: toggle pilih (kecuali sel YOU di tengah)
 	for idx, cell in ipairs(gridButtons) do
 		cell.MouseButton1Click:Connect(function()
 			local px, py = getPlayerTile()
 			if not px then return end
-			local cells = getGridAround(px, py, 5)
-			local c = cells[idx]
-			if c and not c.isPlayer then
-				toggleTileSelection(c.x, c.y)
-			end
+			local half = math.floor(CONFIG.gridSize / 2)
+			local row = math.floor((idx - 1) / 5)
+			local col = (idx - 1) % 5
+			if row == half and col == half then return end
+			local tx = px - half + col
+			local ty = py - half + row
+			toggleTileSelection(tx, ty)
 		end)
 	end
 
@@ -1079,7 +975,7 @@ if not uiOk then
 end
 
 -- ===========================================================================
--- 9. API publik
+-- API publik
 -- ===========================================================================
 _G.GrowBlox = {
 	config = CONFIG,
@@ -1090,7 +986,8 @@ _G.GrowBlox = {
 	pnbTick = pnbTick,
 	toggleTile = toggleTileSelection,
 	clearTiles = clearTileSelection,
-	getState = getState,
+	walkTo = walkTo,
+	getState = playerState,
 	tileAt = tileAt,
 	scanAround = function(radius)
 		local px, py = getPlayerTile()
@@ -1102,6 +999,9 @@ _G.GrowBlox = {
 		running.placeLoop = false
 		running.plantLoop = false
 		running.pnbLoop = false
+		if OrigIsDown and MenuModule and rawget(MenuModule, "isDown") == isDownWrapper then
+			MenuModule.isDown = OrigIsDown
+		end
 		if ui.screenGui then
 			pcall(function() ui.screenGui:Destroy() end)
 		end
@@ -1109,7 +1009,7 @@ _G.GrowBlox = {
 	end,
 }
 
-print("[GrowBlox] Loaded. AutoBreak=" .. tostring(CONFIG.autoBreak)
-	.. " AutoPlace=" .. tostring(CONFIG.autoPlace)
-	.. " AutoPlant=" .. tostring(CONFIG.autoPlant))
-notify("GrowBlox", "Loaded. Break=" .. tostring(CONFIG.autoBreak and "ON" or "OFF") .. " Plant=" .. tostring(CONFIG.autoPlant and "ON" or "OFF"), 3)
+print("[GrowBlox] Loaded v3. Break=" .. tostring(CONFIG.autoBreak)
+	.. " Place=" .. tostring(CONFIG.autoPlace)
+	.. " Plant=" .. tostring(CONFIG.autoPlant))
+notify("GrowBlox v3", "Loaded. Break=" .. tostring(CONFIG.autoBreak and "ON" or "OFF") .. " Plant=" .. tostring(CONFIG.autoPlant and "ON" or "OFF"), 3)
