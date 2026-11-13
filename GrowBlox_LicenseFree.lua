@@ -322,6 +322,10 @@ local function tileAt(layer, x, y)
 	return row and (row[x] or 0) or nil
 end
 
+local function isGroundY(y)
+	return y >= Refs.World.h - 3
+end
+
 local function getPlayerTile()
 	local s = getState()
 	if not s then return nil end
@@ -463,13 +467,11 @@ local function autoBreakOnce()
 	if not px then return false, "no state" end
 
 	-- Target: tile terisi TERDEKAT (bukan asal ambil urutan).
+	-- Hanya tile fg di baris sekitar karakter (bukan background).
 	local target = nil
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
+		-- Lewati tile yang persis di bawah kaki bila itu lantai background
 		if t.fg ~= 0 and breakable(t.fg) then
-			target = t
-			break
-		end
-		if CONFIG.breakBackground and t.bg ~= 0 and breakable(t.bg) then
 			target = t
 			break
 		end
