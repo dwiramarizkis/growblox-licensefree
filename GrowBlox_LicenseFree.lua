@@ -279,7 +279,7 @@ local function debugGrid()
 	for y = py - 1, py + 1 do
 		local row = {}
 		for x = px - 1, px + 1 do
-			row[#row + 1] = x .. ":" .. tostring(tileAt("fg", x, y))
+			row[#row + 1] = x .. ":" .. tostring(tileAt("fg", x, y) or "?")
 		end
 		print("[GrowBlox] grid y=" .. y .. " " .. table.concat(row, " "))
 	end
@@ -301,6 +301,12 @@ local function tileAt(layer, x, y)
 	row = grid[x]
 	if type(row) == "table" then
 		return row[y] or 0
+	end
+
+	-- Fallback: grid[y] langsung berisi id (bukan baris)
+	local direct = grid[y]
+	if type(direct) == "number" then
+		return direct
 	end
 
 	return 0
