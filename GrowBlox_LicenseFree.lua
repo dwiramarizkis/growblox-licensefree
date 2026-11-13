@@ -364,6 +364,11 @@ local function tryBreak(x, y)
 	if Refs.Punch then
 		local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
 		if ok then
+			-- Cek tile berubah setelah pukulan (persis k.lua)
+			local newId = fgIdAt(x, y)
+			if newId ~= id then
+				return "broke"
+			end
 			return "hit"
 		end
 		warn("[GrowBlox] punch error: " .. tostring(err))
