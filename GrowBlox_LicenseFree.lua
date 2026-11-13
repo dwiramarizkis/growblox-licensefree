@@ -253,6 +253,10 @@ local function scanRefs()
 		return false
 	end
 	print("[GrowBlox] scanRefs: getgc objects=" .. tostring(#all))
+
+	-- Cari fungsi kandidat punch/settile apa pun, catat konstanta untuk debugging.
+	local punchSeen, settileSeen = {}, {}
+
 	for _, v in ipairs(all) do
 		if type(v) == "table" then
 			if not Refs.World then
@@ -267,20 +271,27 @@ local function scanRefs()
 				local ok, isS = pcall(isStateHolder, v)
 				if ok and isS then Refs.State = rawget(v, "state") end
 			end
-		elseif type(v) == "function" and (not Refs.SetTile or not Refs.Punch) then
-			-- Jangan filter isGameFn terlalu ketat dulu; deteksi konstanta lebih penting.
-			if not Refs.SetTile and isSetTileFn(v) then
-				Refs.SetTile = v
-				print("[GrowBlox] SetTile found via konstanta")
-			elseif not Refs.Punch and isPunchFn(v) then
-				Refs.Punch = v
-				print("[GrowBlox] Punch found via konstanta")
+		elseif type(v) == "function" then
+			-- Kumpulkan kandidat terlebih dahulu (hindari menetapkan fungsi yang salah terlalu dini)
+			if isSetTileFn(v) then
+				settileSeen[#settileSeen + 1] = v
+			end
+			if isPunchFn(v) then
+				punchSeen[#punchSeen + 1] = v
 			end
 		end
-		if Refs.World and Refs.Inv and Refs.State and Refs.SetTile and Refs.Punch then
-			break
-		end
 	end
+
+	-- Pilih kandidat yang paling mungkin
+	if #settileSeen > 0 then
+		Refs.SetTile = settileSeen[1]
+		print("[GrowBlox] SetTile kandidat: " .. #settileSeen)
+	end
+	if #punchSeen > 0 then
+		Refs.Punch = punchSeen[1]
+		print("[GrowBlox] Punch kandidat: " .. #punchSeen)
+	end
+
 	return Refs.World ~= nil
 end
 
