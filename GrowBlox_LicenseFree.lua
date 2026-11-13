@@ -364,9 +364,6 @@ local function tryBreak(x, y)
 	if Refs.Punch then
 		local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
 		if ok then
-			if fgIdAt(x, y) ~= id then
-				return "broke"
-			end
 			return "hit"
 		end
 		warn("[GrowBlox] punch error: " .. tostring(err))
@@ -529,11 +526,12 @@ local function autoBreakOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
 
+	-- Target hanya tile fg terisi; lewati yang baru saja dipukul.
 	local target = nil
+	local now = os.clock()
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
 		if breakable(t.fg) then
 			local key = t.x .. "," .. t.y
-			local now = os.clock()
 			if not lastPunch[key] or (now - lastPunch[key]) >= CONFIG.punchCooldown then
 				target = t
 				break
@@ -545,6 +543,8 @@ local function autoBreakOnce()
 	local r = tryBreak(target.x, target.y)
 	if r == "hit" or r == "broke" then
 		return true, "break " .. target.x .. "," .. target.y .. " id=" .. tostring(target.fg)
+	elseif r == "cooldown" then
+		return false, "cooldown " .. target.x .. "," .. target.y
 	end
 	return false, "break failed: " .. tostring(r)
 end
