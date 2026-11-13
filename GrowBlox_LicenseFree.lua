@@ -157,10 +157,10 @@ local function scanRefs()
 				and type(rawget(v, "h")) == "number" then
 				Refs.World = v
 			end
-			-- Inventory: slots + remove + count
+			-- Inventory: slots + remove + count (count bisa method/function)
 			if not Refs.Inv and type(rawget(v, "slots")) == "table"
 				and type(rawget(v, "remove")) == "function"
-				and type(rawget(v, "count")) == "function" then
+				and (type(rawget(v, "count")) == "function" or type(rawget(v, "capacity")) == "number") then
 				Refs.Inv = v
 			end
 			-- State holder: state function
@@ -193,7 +193,9 @@ end
 
 local refsOk = scanRefs()
 if not refsOk then
-	print("[GrowBlox] Gagal menemukan world. Jalankan ulang di dalam world.")
+	print("[GrowBlox] Gagal menemukan world. Coba ulang dalam 3 detik...")
+	task.wait(3)
+	scanRefs()
 end
 
 -- ===========================================================================
