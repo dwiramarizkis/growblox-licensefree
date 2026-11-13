@@ -84,10 +84,10 @@ add("Input recorder", "AKTIF (sentuh, keyboard, mouse, gamepad)")
 -- ---------------------------------------------------------------------------
 local function listButtons(parent, depth, maxCount)
 	depth = depth or 0
-	maxCount = maxCount or 40
+	maxCount = maxCount or 60
 	local out = {}
 	local function walk(p, d)
-		if d > 5 then return end
+		if d > 6 then return end
 		for _, c in ipairs(p:GetChildren()) do
 			if c:IsA("TextButton") or c:IsA("ImageButton") or c:IsA("TextLabel") or c:IsA("ImageLabel") then
 				if #out < maxCount then
@@ -97,10 +97,16 @@ local function listButtons(parent, depth, maxCount)
 					else
 						tag = "[LBL]"
 					end
-					out[#out + 1] = c:GetFullName() .. tag
+					local extra = ""
+					pcall(function()
+						if c:IsA("TextButton") or c:IsA("TextLabel") then
+							extra = " text=" .. tostring(c.Text):sub(1, 30)
+						end
+					end)
+					out[#out + 1] = c:GetFullName() .. tag .. extra
 				end
 			end
-			if c:IsA("Frame") or c:IsA("ScrollingFrame") or c:IsA("CanvasGroup") or c:IsA("Folder") then
+			if c:IsA("GuiObject") or c:IsA("Folder") then
 				walk(c, d + 1)
 			end
 		end
