@@ -168,34 +168,61 @@ local function hasConstPair(fn, a, b)
 	return false
 end
 
--- Persis pola k.lua: SetTile = konstanta "placedAt" + "flips";
--- fallback ByteNet = konstanta "tile" + "placedAt" + "flips".
+-- Deteksi SetTile: beberapa pola, karena versi game bisa beda.
 local function isSetTileFn(fn)
 	if not getconsts then return false end
-	if globalFn("islclosure") and not globalFn("islclosure")(fn) then return false end
 	local ok, consts = pcall(getconsts, fn)
 	if not ok or type(consts) ~= "table" then return false end
+
+	-- Pola k.lua asli
 	local hasSend, hasPlaced, hasFlips = false, false, false
 	for _, c in pairs(consts) do
 		if c == "tile" or c == "SetTile" then hasSend = true
 		elseif c == "placedAt" then hasPlaced = true
 		elseif c == "flips" then hasFlips = true end
 	end
-	return hasSend and hasPlaced and hasFlips
+	if hasSend and hasPlaced and hasFlips then return true end
+
+	-- Pola Growblox: fungsi tileChanged dengan layer/bg/fg/x/y/id/flip
+	local hasTileChanged, hasLayer, hasFlip = false, false, false
+	for _, c in pairs(consts) do
+		if c == "tileChanged" then hasTileChanged = true
+		elseif c == "layer" then hasLayer = true
+		elseif c == "flip" then hasFlip = true end
+	end
+	return hasTileChanged and hasLayer and hasFlip
 end
 
--- Persis pola k.lua: Punch = "Empty the Vending Machine first!" + ("newCrack" atau "HarvestProvider")
+-- Deteksi Punch: beberapa pola.
 local function isPunchFn(fn)
 	if not getconsts then return false end
-	if globalFn("islclosure") and not globalFn("islclosure")(fn) then return false end
 	local ok, consts = pcall(getconsts, fn)
 	if not ok or type(consts) ~= "table" then return false end
+
+	-- Pola k.lua asli
 	local hasVend, hasMark = false, false
 	for _, c in pairs(consts) do
 		if c == "Empty the Vending Machine first!" then hasVend = true
 		elseif c == "newCrack" or c == "HarvestProvider" then hasMark = true end
 	end
-	return hasVend and hasMark
+	if hasVend and hasMark then return true end
+
+	-- Pola Growblox 1: punchEvent + punch_miss
+	local hasPunchEvent, hasPunchMiss = false, false
+	for _, c in pairs(consts) do
+		if c == "punchEvent" then hasPunchEvent = true
+		elseif c == "punch_miss" then hasPunchMiss = true end
+	end
+	if hasPunchEvent and hasPunchMiss then return true end
+
+	-- Pola Growblox 2: punchCount + Punch + punchFx
+	local hasPunchCount, hasPunch, hasPunchFx = false, false, false
+	for _, c in pairs(consts) do
+		if c == "punchCount" then hasPunchCount = true
+		elseif c == "Punch" then hasPunch = true
+		elseif c == "punchFx" then hasPunchFx = true end
+	end
+	return hasPunchCount and hasPunch and hasPunchFx
 end
 
 -- Pastikan fungsi milik game, bukan script ini (persis k.lua)
@@ -240,11 +267,14 @@ local function scanRefs()
 				local ok, isS = pcall(isStateHolder, v)
 				if ok and isS then Refs.State = rawget(v, "state") end
 			end
-		elseif type(v) == "function" and (not Refs.SetTile or not Refs.Punch) and isGameFn(v) then
+		elseif type(v) == "function" and (not Refs.SetTile or not Refs.Punch) then
+			-- Jangan filter isGameFn terlalu ketat dulu; deteksi konstanta lebih penting.
 			if not Refs.SetTile and isSetTileFn(v) then
 				Refs.SetTile = v
+				print("[GrowBlox] SetTile found via konstanta")
 			elseif not Refs.Punch and isPunchFn(v) then
 				Refs.Punch = v
+				print("[GrowBlox] Punch found via konstanta")
 			end
 		end
 		if Refs.World and Refs.Inv and Refs.State and Refs.SetTile and Refs.Punch then
@@ -358,7 +388,23 @@ local function punchTile(x, y)
 		end
 		return true
 	end
-	-- Fallback: hapus tile langsung (hanya kalau game mengizinkan)
+
+	-- Fallback 1: ByteNet langsung
+	if NetOk and type(Net) == "table" and type(Net.tile) == "table" then
+		local ok = pcall(Net.tile.send, {
+			layer = 1,
+			x = x,
+			y = y,
+			id = 0,
+			flip = false,
+		})
+		if ok then
+			warn("[GrowBlox] Punch tidak ketemu, fallback ByteNet tile id=0")
+			return true
+		end
+	end
+
+	-- Fallback 2: SetTile id=0
 	warn("[GrowBlox] Punch tidak ketemu, fallback setTile 0")
 	return sendSetTile("fg", x, y, 0)
 end
