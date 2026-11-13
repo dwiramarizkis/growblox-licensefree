@@ -419,22 +419,29 @@ end
 local function invCount(id)
 	if not Refs.Inv then return 0 end
 	-- Method count (bisa via metatable)
+	local viaMethod = nil
 	pcall(function()
 		local cnt = Refs.Inv.count
 		if type(cnt) == "function" then
 			local ok, n = pcall(cnt, Refs.Inv, id)
-			if ok and type(n) == "number" then return n end
-			local ok2, n2 = pcall(cnt, id)
-			if ok2 and type(n2) == "number" then return n2 end
+			if ok and type(n) == "number" then viaMethod = n end
+			if viaMethod == nil then
+				local ok2, n2 = pcall(cnt, id)
+				if ok2 and type(n2) == "number" then viaMethod = n2 end
+			end
 		end
 	end)
+	if viaMethod ~= nil then
+		return viaMethod
+	end
 	-- Fallback: cari di slots
+	local total = 0
 	for _, slot in ipairs(Refs.Inv.slots or {}) do
 		if type(slot) == "table" and slot.id == id then
-			return slot.n or 0
+			total += (slot.n or 0)
 		end
 	end
-	return 0
+	return total
 end
 
 -- Daftar item yang tersedia di inventory (id -> jumlah)
@@ -514,11 +521,11 @@ local function sendSetTile(layer, x, y, id)
 end
 
 local function tryPlace(x, y, id)
-	if not id or invCount(id) <= 0 then return "habis" end
-	-- JANGAN cek tile kosong dulu; biarkan server yang memutuskan.
+	if not id then return "habis" end
+	local count = invCount(id)
+	print("[GrowBlox] tryPlace id=" .. tostring(id) .. " count=" .. tostring(count))
+	if count <= 0 then return "habis" end
 	if not sendSetTile("fg", x, y, id) then return nil end
-	-- JANGAN invRemove manual di sini. Server yang mengurangi inventory.
-	-- (Kalau server menolak, inventory tidak berubah.)
 	return "place"
 end
 
