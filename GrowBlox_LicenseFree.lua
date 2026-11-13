@@ -3,7 +3,7 @@
 --   1. Auto Farm      : panen sugar cane otomatis + tanam seed otomatis
 --   2. Auto Put/Break : hancurkan block + tempatkan block otomatis
 --   3. Scanner        : daftar objek interaktif di sekitar
---   4. GUI            : WindUI bila tersedia, fallback GUI bawaan bila tidak
+--   4. GUI            : built-in (tanpa dependency eksternal)
 -- Tanpa key, HWID, account binding, atau server lisensi.
 
 local UIS = game:GetService("UserInputService")
@@ -64,10 +64,6 @@ local CONFIG = {
 	breakHits = 1,
 	breakInterval = 0.4,
 	placeWait = 0.4,
-
-	-- Bila tidak ada target dengan nama cocok, jangan klik sembarangan.
-	-- Aktifkan hanya jika kamu sudah yakin game memakai satu jenis ClickDetector.
-	fallbackToAnyClick = false,
 
 	-- Lower-case substrings matched against object names.
 	sugarCaneNames = {
@@ -362,19 +358,7 @@ local function findInteractable(keywords)
 end
 
 local function findSugarCane()
-	local target = findInteractable(CONFIG.sugarCaneNames)
-	if target then
-		return target
-	end
-
-	if CONFIG.fallbackToAnyClick then
-		local any = findInteractable(nil)
-		if any and any.clickDetector then
-			return any
-		end
-	end
-
-	return nil
+	return findInteractable(CONFIG.sugarCaneNames)
 end
 
 local function findPlantSpot()
@@ -407,7 +391,6 @@ local function fireClickDetector(clickDetector)
 		if ok then
 			return true
 		end
-		-- Synapse / scriptware style: fireclickdetector(detector, distance)
 		local part = clickDetector.Parent
 		if part and part:IsA("BasePart") then
 			ok = pcall(fire, clickDetector, 0)
@@ -629,36 +612,7 @@ local function placeBlock()
 end
 
 -- ===========================================================================
--- 8. Loops
--- ===========================================================================
-local loopRunning = {
-	harvest = true,
-	plant = true,
-	breakBlocks = true,
-	placeBlocks = true,
-}
-
-local function startLoop(name, enabled, action)
-	task.spawn(function()
-		while loopRunning[name] do
-			if enabled() then
-				local ok, err = pcall(action)
-				if not ok then
-					warn("[GrowBlox] " .. name .. " error: " .. tostring(err))
-				end
-			end
-			task.wait(0.25)
-		end
-	end)
-end
-
-startLoop("harvest", function() return CONFIG.autoHarvest end, harvestSugarCane)
-startLoop("plant", function() return CONFIG.autoPlant end, plantSeed)
-startLoop("breakBlocks", function() return CONFIG.autoBreak end, breakBlock)
-startLoop("placeBlocks", function() return CONFIG.autoPlace end, placeBlock)
-
--- ===========================================================================
--- 9. Scanner
+-- 8. Scanner
 -- ===========================================================================
 local function scanNearby(radius)
 	local root = getRootPart()
@@ -735,221 +689,53 @@ local function printScan(radius)
 end
 
 -- ===========================================================================
--- 10. UI (WindUI + fallback)
+-- 9. GUI (built-in, always created first)
 -- ===========================================================================
-local function createWindUi()
-	local windUi = loadstring(game:HttpGet(
-		"https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"
-	))()
-
-	local window = windUi:CreateWindow({
-		Title = "GrowBlox",
-		Folder = "GrowBlox",
-		Icon = "solar:folder-2-bold-duotone",
-		NewElements = true,
-		OpenButton = {
-			Title = "Open GrowBlox",
-			Enabled = true,
-			Draggable = true,
-		},
-	})
-
-	local farmTab = window:Tab({
-		Title = "Auto Farm",
-		Desc = "Sugar cane auto farm",
-		Icon = "solar:home-2-bold",
-	})
-
-	local putTab = window:Tab({
-		Title = "Auto Put/Break",
-		Desc = "Break and place blocks",
-		Icon = "solar:home-2-bold",
-	})
-
-	local scanTab = window:Tab({
-		Title = "Scanner",
-		Desc = "Find nearby object names",
-		Icon = "solar:home-2-bold",
-	})
-
-	farmTab:Toggle({
-		Title = "Auto Harvest",
-		Desc = "Break sugar cane with 2 hits",
-		Value = CONFIG.autoHarvest,
-		Callback = function(state)
-			CONFIG.autoHarvest = state
-			notify("Auto Harvest", state and "ON" or "OFF", 1.5)
-		end,
-	})
-
-	farmTab:Toggle({
-		Title = "Auto Plant",
-		Desc = "Plant seed on empty plot",
-		Value = CONFIG.autoPlant,
-		Callback = function(state)
-			CONFIG.autoPlant = state
-			notify("Auto Plant", state and "ON" or "OFF", 1.5)
-		end,
-	})
-
-	farmTab:Slider({
-		Title = "Range",
-		Desc = "Search radius (studs)",
-		Step = 1,
-		Value = {
-			Min = 5,
-			Max = 100,
-			Default = CONFIG.range,
-		},
-		Callback = function(value)
-			CONFIG.range = value
-		end,
-	})
-
-	farmTab:Slider({
-		Title = "Interact Distance",
-		Desc = "Walk until this close (studs)",
-		Step = 1,
-		Value = {
-			Min = 5,
-			Max = 30,
-			Default = CONFIG.interactDistance,
-		},
-		Callback = function(value)
-			CONFIG.interactDistance = value
-		end,
-	})
-
-	farmTab:Slider({
-		Title = "Hit Interval",
-		Desc = "Delay between 2 hits (seconds)",
-		Step = 0.1,
-		Value = {
-			Min = 0.1,
-			Max = 2,
-			Default = CONFIG.hitInterval,
-		},
-		Callback = function(value)
-			CONFIG.hitInterval = value
-		end,
-	})
-
-	putTab:Toggle({
-		Title = "Auto Break",
-		Desc = "Break nearby breakable blocks",
-		Value = CONFIG.autoBreak,
-		Callback = function(state)
-			CONFIG.autoBreak = state
-			notify("Auto Break", state and "ON" or "OFF", 1.5)
-		end,
-	})
-
-	putTab:Toggle({
-		Title = "Auto Place",
-		Desc = "Place block on empty spot",
-		Value = CONFIG.autoPlace,
-		Callback = function(state)
-			CONFIG.autoPlace = state
-			notify("Auto Place", state and "ON" or "OFF", 1.5)
-		end,
-	})
-
-	putTab:Slider({
-		Title = "Break Hits",
-		Desc = "Hits needed to break a block",
-		Step = 1,
-		Value = {
-			Min = 1,
-			Max = 10,
-			Default = CONFIG.breakHits,
-		},
-		Callback = function(value)
-			CONFIG.breakHits = value
-		end,
-	})
-
-	putTab:Slider({
-		Title = "Break Interval",
-		Desc = "Delay between break hits (seconds)",
-		Step = 0.1,
-		Value = {
-			Min = 0.1,
-			Max = 2,
-			Default = CONFIG.breakInterval,
-		},
-		Callback = function(value)
-			CONFIG.breakInterval = value
-		end,
-	})
-
-	putTab:Slider({
-		Title = "Place Delay",
-		Desc = "Wait after placing (seconds)",
-		Step = 0.1,
-		Value = {
-			Min = 0.1,
-			Max = 2,
-			Default = CONFIG.placeWait,
-		},
-		Callback = function(value)
-			CONFIG.placeWait = value
-		end,
-	})
-
-	scanTab:Button({
-		Title = "Scan Nearby (30 studs)",
-		Desc = "Print object names to console",
-		Justify = "Center",
-		Callback = function()
-			printScan(30)
-		end,
-	})
-
-	scanTab:Button({
-		Title = "Scan Wide (100 studs)",
-		Desc = "Print more object names",
-		Justify = "Center",
-		Callback = function()
-			printScan(100)
-		end,
-	})
-
-	return {
-		lib = windUi,
-		window = window,
-		screenGui = windUi.ScreenGui,
-	}
-end
-
-local function createFallbackUi()
+local function createMainUi()
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "HipHub_GrowBlox"
 	screenGui.ResetOnSpawn = false
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
+	-- Prioritaskan PlayerGui agar pasti terlihat.
+	local parent = nil
 	pcall(function()
-		local parent
-		if type(gethui) == "function" then
-			parent = gethui()
-		end
-		if not parent then
-			parent = player:WaitForChild("PlayerGui")
-		end
-		screenGui.Parent = parent
+		parent = player:WaitForChild("PlayerGui")
 	end)
+	if not parent and type(gethui) == "function" then
+		pcall(function()
+			parent = gethui()
+		end)
+	end
+	if not parent then
+		pcall(function()
+			parent = game:GetService("CoreGui")
+		end)
+	end
+	screenGui.Parent = parent
 
+	-- Container utama
 	local frame = Instance.new("Frame")
 	frame.Name = "Main"
-	frame.Size = UDim2.new(0, 230, 0, 246)
-	frame.Position = UDim2.new(0, 10, 0.5, -123)
-	frame.BackgroundColor3 = Color3.fromRGB(20, 24, 44)
+	frame.Size = UDim2.new(0, 240, 0, 270)
+	frame.Position = UDim2.new(0.5, -120, 0.5, -135)
+	frame.BackgroundColor3 = Color3.fromRGB(18, 22, 40)
 	frame.BorderSizePixel = 0
+	frame.Active = true
+	frame.Draggable = true
 	frame.Parent = screenGui
 
 	local frameCorner = Instance.new("UICorner")
 	frameCorner.CornerRadius = UDim.new(0, 10)
 	frameCorner.Parent = frame
 
+	local frameStroke = Instance.new("UIStroke")
+	frameStroke.Color = Color3.fromRGB(0, 200, 255)
+	frameStroke.Thickness = 1
+	frameStroke.Transparency = 0.4
+	frameStroke.Parent = frame
+
+	-- Title bar
 	local title = Instance.new("TextLabel")
 	title.Size = UDim2.new(1, -20, 0, 30)
 	title.Position = UDim2.new(0, 10, 0, 8)
@@ -991,6 +777,7 @@ local function createFallbackUi()
 	addToggleButton("Auto Break", "autoBreak", 124)
 	addToggleButton("Auto Place", "autoPlace", 164)
 
+	-- Scan button
 	local scanButton = Instance.new("TextButton")
 	scanButton.Size = UDim2.new(1, -20, 0, 34)
 	scanButton.Position = UDim2.new(0, 10, 0, 204)
@@ -1010,26 +797,71 @@ local function createFallbackUi()
 		printScan(30)
 	end)
 
+	-- Tombol tutup
+	local closeButton = Instance.new("TextButton")
+	closeButton.Size = UDim2.new(0, 24, 0, 24)
+	closeButton.Position = UDim2.new(1, -30, 0, 8)
+	closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+	closeButton.BorderSizePixel = 0
+	closeButton.Text = "X"
+	closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	closeButton.Font = Enum.Font.GothamBold
+	closeButton.TextSize = 12
+	closeButton.Parent = frame
+
+	local closeCorner = Instance.new("UICorner")
+	closeCorner.CornerRadius = UDim.new(0, 6)
+	closeCorner.Parent = closeButton
+
+	closeButton.MouseButton1Click:Connect(function()
+		safeDestroy(screenGui)
+	end)
+
 	return {
-		lib = nil,
-		window = nil,
 		screenGui = screenGui,
 	}
 end
 
 -- ===========================================================================
--- 11. Error boundary
+-- 10. Create UI immediately (no character wait)
 -- ===========================================================================
-waitForCharacter()
-local uiOk, uiHandle = pcall(createWindUi)
+local uiOk, uiHandle = pcall(createMainUi)
 if not uiOk then
-	warn("[GrowBlox] WindUI failed (" .. tostring(uiHandle) .. "), using built-in fallback UI")
-	uiOk, uiHandle = pcall(createFallbackUi)
-	if not uiOk then
-		warn("[GrowBlox] Fallback UI also failed: " .. tostring(uiHandle))
-		uiHandle = nil
-	end
+	warn("[GrowBlox] UI creation failed: " .. tostring(uiHandle))
+	uiHandle = nil
+else
+	print("[GrowBlox] UI created under " .. tostring(uiHandle.screenGui and uiHandle.screenGui.Parent and uiHandle.screenGui.Parent.Name or "?"))
+	notify("GrowBlox", "Script loaded. GUI is ready.", 3)
 end
+
+-- ===========================================================================
+-- 11. Loops
+-- ===========================================================================
+local loopRunning = {
+	harvest = true,
+	plant = true,
+	breakBlocks = true,
+	placeBlocks = true,
+}
+
+local function startLoop(name, enabled, action)
+	task.spawn(function()
+		while loopRunning[name] do
+			if enabled() then
+				local ok, err = pcall(action)
+				if not ok then
+					warn("[GrowBlox] " .. name .. " error: " .. tostring(err))
+				end
+			end
+			task.wait(0.25)
+		end
+	end)
+end
+
+startLoop("harvest", function() return CONFIG.autoHarvest end, harvestSugarCane)
+startLoop("plant", function() return CONFIG.autoPlant end, plantSeed)
+startLoop("breakBlocks", function() return CONFIG.autoBreak end, breakBlock)
+startLoop("placeBlocks", function() return CONFIG.autoPlace end, placeBlock)
 
 -- ===========================================================================
 -- 12. Startup report
