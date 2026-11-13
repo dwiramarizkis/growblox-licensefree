@@ -74,12 +74,12 @@ local Refs = {
 local function isWorldTbl(v)
 	return type(rawget(v, "fg")) == "table" and type(rawget(v, "bg")) == "table"
 		and type(rawget(v, "w")) == "number" and type(rawget(v, "h")) == "number"
-		and rawget(v, "spawn") ~= nil
 end
 
 local function isInvTbl(v)
 	return type(rawget(v, "slots")) == "table"
 		and (rawget(v, "capacity") ~= nil or type(rawget(v, "count")) == "function")
+		and type(rawget(v, "remove")) == "function"
 end
 
 local function isStateHolder(v)
@@ -150,17 +150,28 @@ local function scanRefs()
 	local punchSeen, settileSeen = {}, {}
 	for _, v in ipairs(all) do
 		if type(v) == "table" then
-			if not Refs.World then
-				local okW, isW = pcall(isWorldTbl, v)
-				if okW and isW then Refs.World = v end
+			-- World: cukup fg/bg + w/h (tanpa spawn)
+			if not Refs.World and type(rawget(v, "fg")) == "table"
+				and type(rawget(v, "bg")) == "table"
+				and type(rawget(v, "w")) == "number"
+				and type(rawget(v, "h")) == "number" then
+				Refs.World = v
 			end
-			if not Refs.Inv then
-				local okI, isI = pcall(isInvTbl, v)
-				if okI and isI then Refs.Inv = v end
+			-- Inventory: slots + remove + count
+			if not Refs.Inv and type(rawget(v, "slots")) == "table"
+				and type(rawget(v, "remove")) == "function"
+				and type(rawget(v, "count")) == "function" then
+				Refs.Inv = v
 			end
+			-- State holder: state function
 			if not Refs.State then
-				local okS, isS = pcall(isStateHolder, v)
-				if okS and isS then Refs.State = rawget(v, "state") end
+				local fn = rawget(v, "state")
+				if type(fn) == "function" then
+					local okS, s = pcall(fn)
+					if okS and type(s) == "table" and type(s.x) == "number" and type(s.y) == "number" then
+						Refs.State = fn
+					end
+				end
 			end
 		elseif type(v) == "function" then
 			if isSetTileFn(v) then settileSeen[#settileSeen + 1] = v end
