@@ -373,6 +373,7 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GrowBloxProbe"
 screenGui.ResetOnSpawn = false
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.DisplayOrder = 999
 pcall(function()
 	local parent
 	if type(gethui) == "function" then parent = gethui() end
@@ -381,11 +382,14 @@ pcall(function()
 	screenGui.Parent = parent
 end)
 
+-- Frame kecil di pojok kiri-bawah, bisa digeser & ditutup.
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 460, 0, 430)
-frame.Position = UDim2.new(0.5, -230, 0.5, -215)
+frame.Size = UDim2.new(0, 310, 0, 190)
+frame.Position = UDim2.new(0, 8, 1, -198)
 frame.BackgroundColor3 = Color3.fromRGB(15, 18, 32)
 frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
 frame.Parent = screenGui
 
 local corner = Instance.new("UICorner")
@@ -393,30 +397,58 @@ corner.CornerRadius = UDim.new(0, 8)
 corner.Parent = frame
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -120, 0, 28)
-title.Position = UDim2.new(0, 12, 0, 8)
+title.Size = UDim2.new(1, -70, 0, 26)
+title.Position = UDim2.new(0, 10, 0, 6)
 title.BackgroundTransparency = 1
-title.Text = "GrowBlox Probe"
+title.Text = "GrowBlox Probe (bisa ditutup)"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
-title.TextSize = 14
+title.TextSize = 12
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = frame
 
+local hideButton = Instance.new("TextButton")
+hideButton.Size = UDim2.new(0, 26, 0, 22)
+hideButton.Position = UDim2.new(1, -30, 0, 6)
+hideButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+hideButton.BorderSizePixel = 0
+hideButton.Text = "X"
+hideButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+hideButton.Font = Enum.Font.GothamBold
+hideButton.TextSize = 11
+hideButton.Parent = frame
+
+local hideCorner = Instance.new("UICorner")
+hideCorner.CornerRadius = UDim.new(0, 5)
+hideCorner.Parent = hideButton
+
 local copyButton = Instance.new("TextButton")
-copyButton.Size = UDim2.new(0, 100, 0, 26)
-copyButton.Position = UDim2.new(1, -110, 0, 8)
+copyButton.Size = UDim2.new(0, 70, 0, 22)
+copyButton.Position = UDim2.new(1, -104, 0, 6)
 copyButton.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
 copyButton.BorderSizePixel = 0
 copyButton.Text = "COPY"
 copyButton.TextColor3 = Color3.fromRGB(0, 0, 0)
 copyButton.Font = Enum.Font.GothamBold
-copyButton.TextSize = 12
+copyButton.TextSize = 11
 copyButton.Parent = frame
 
 local copyCorner = Instance.new("UICorner")
 copyCorner.CornerRadius = UDim.new(0, 5)
 copyCorner.Parent = copyButton
+
+-- Toggle tampilkan/sembunyikan isi. Saat disembunyikan, GUI tidak menghalangi.
+local contentVisible = true
+local function setContentVisible(state)
+	contentVisible = state
+	frame.Size = state and UDim2.new(0, 310, 0, 190) or UDim2.new(0, 140, 0, 34)
+	scroll.Visible = state
+end
+
+hideButton.MouseButton1Click:Connect(function()
+	setContentVisible(not contentVisible)
+	hideButton.Text = contentVisible and "X" or "+"
+end)
 
 copyButton.MouseButton1Click:Connect(function()
 	pcall(function()
@@ -425,17 +457,22 @@ copyButton.MouseButton1Click:Connect(function()
 			copyButton.Text = "OK"
 			task.wait(1.5)
 			copyButton.Text = "COPY"
+		elseif writefile then
+			writefile("GrowBlox_Probe.txt", report)
+			copyButton.Text = "SAVED"
+			task.wait(1.5)
+			copyButton.Text = "COPY"
 		end
 	end)
 end)
 
 local scroll = Instance.new("ScrollingFrame")
-scroll.Size = UDim2.new(1, -24, 1, -48)
-scroll.Position = UDim2.new(0, 12, 0, 40)
+scroll.Size = UDim2.new(1, -20, 1, -40)
+scroll.Position = UDim2.new(0, 10, 0, 34)
 scroll.BackgroundColor3 = Color3.fromRGB(22, 27, 48)
 scroll.BorderSizePixel = 0
 scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-scroll.ScrollBarThickness = 6
+scroll.ScrollBarThickness = 5
 scroll.Parent = frame
 
 local scrollCorner = Instance.new("UICorner")
@@ -443,13 +480,13 @@ scrollCorner.CornerRadius = UDim.new(0, 6)
 scrollCorner.Parent = scroll
 
 local text = Instance.new("TextLabel")
-text.Size = UDim2.new(1, -16, 0, 0)
-text.Position = UDim2.new(0, 8, 0, 8)
+text.Size = UDim2.new(1, -12, 0, 0)
+text.Position = UDim2.new(0, 6, 0, 6)
 text.BackgroundTransparency = 1
 text.Text = report
 text.TextColor3 = Color3.fromRGB(220, 235, 255)
 text.Font = Enum.Font.Code
-text.TextSize = 11
+text.TextSize = 10
 text.TextWrapped = true
 text.TextXAlignment = Enum.TextXAlignment.Left
 text.TextYAlignment = Enum.TextYAlignment.Top
@@ -459,8 +496,8 @@ text.Parent = scroll
 task.spawn(function()
 	task.wait(0.5)
 	pcall(function()
-		local h = text.TextBounds.Y + 20
-		text.Size = UDim2.new(1, -16, 0, h)
+		local h = text.TextBounds.Y + 16
+		text.Size = UDim2.new(1, -12, 0, h)
 		scroll.CanvasSize = UDim2.new(0, 0, 0, h)
 	end)
 end)
@@ -469,4 +506,4 @@ pcall(function()
 	if writefile then writefile("GrowBlox_Probe.txt", report) end
 end)
 
-add("INFO", "Sekarang lakukan manual: pukul/pecah tile, tanam seed, panen pohon. Lalu kirim hasil console/log [Hook] dan [RemoteFire].")
+add("INFO", "GUI kecil di kiri-bawah. Tekan X untuk menyembunyikan. Sekarang lakukan manual: pukul/pecah tile, tanam seed, panen pohon. Hasil tetap tercetak di console dan tersimpan di GrowBlox_Probe.txt.")
