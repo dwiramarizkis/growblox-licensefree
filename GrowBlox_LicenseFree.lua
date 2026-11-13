@@ -86,6 +86,7 @@ local CONFIG = {
 	autoBreak = true,
 	autoPlace = false,
 	autoPlant = true,
+	pnbEnabled = false,  -- Place 'n Break grid mode
 
 	-- Item untuk place dan tanam
 	placeId = 20,      -- Dirt
@@ -96,7 +97,17 @@ local CONFIG = {
 	mutePunch = true,
 	breakBackground = false,
 	walkSpeed = 16,
+
+	-- Grid PNB
+	gridSize = 5,           -- 5x5 di sekitar pemain
+	pnbInterval = 0.15,     -- jeda antar aksi PNB
+	pnbBreakOccupied = true,  -- pecahkan tile terisi di sel terpilih
+	pnbPlaceEmpty = true,     -- isi tile kosong di sel terpilih
 }
+
+-- Sel grid terpilih: map "x,y" -> true
+local selectedTiles = {}
+local gridTiles = {}   -- cache posisi grid terakhir
 
 -- ===========================================================================
 -- 2. Temukan referensi game (sekali jalan, pola terbukti)
@@ -440,24 +451,86 @@ local function autoPlantOnce()
 end
 
 -- ===========================================================================
+-- 6b. Place 'n Break grid mode
+-- ===========================================================================
+local function pnbTick()
+	if not CONFIG.pnbEnabled then
+		return false, "pnb off"
+	end
+
+	local px, py = getPlayerTile()
+	if not px then return false, "no state" end
+
+	-- Refresh cache grid
+	gridTiles = {}
+	for y = py - CONFIG.gridSize, py + CONFIG.gridSize do
+		for x = px - CONFIG.gridSize, px + CONFIG.gridSize do
+			local fg = tileAt("fg", x, y)
+			local bg = tileAt("bg", x, y)
+			if fg ~= nil then
+				gridTiles[#gridTiles + 1] = { x = x, y = y, fg = fg, bg = bg }
+			end
+		end
+	end
+
+	-- Eksekusi pada sel terpilih saja
+	for _, t in ipairs(gridTiles) do
+		if selectedTiles[t.x .. "," .. t.y] then
+			if t.fg ~= 0 and CONFIG.pnbBreakOccupied then
+				local ok = punchTile(t.x, t.y)
+				if ok then
+					return true, "pnb break " .. t.x .. "," .. t.y
+				end
+			elseif t.fg == 0 and CONFIG.pnbPlaceEmpty then
+				if invCount(CONFIG.placeId) > 0 then
+					local ok = placeTile("fg", t.x, t.y, CONFIG.placeId)
+					if ok then
+						return true, "pnb place " .. t.x .. "," .. t.y
+					end
+				else
+					return false, "no block"
+				end
+			end
+		end
+	end
+
+	return false, "no pnb action"
+end
+
+local function toggleTileSelection(x, y)
+	local key = x .. "," .. y
+	if selectedTiles[key] then
+		selectedTiles[key] = nil
+	else
+		selectedTiles[key] = true
+	end
+	return selectedTiles[key] == true
+end
+
+local function clearTileSelection()
+	selectedTiles = {}
+end
+
+-- ===========================================================================
 -- 7. Loop utama
 -- ===========================================================================
-local running = { breakLoop = true, placeLoop = true, plantLoop = true }
+local running = { breakLoop = true, placeLoop = true, plantLoop = true, pnbLoop = true }
 
-local function startLoop(name, enabled, action)
+local function startLoop(name, enabled, action, waitTime)
 	task.spawn(function()
 		while running[name] do
 			if enabled() then
 				pcall(action)
 			end
-			task.wait(CONFIG.interval)
+			task.wait(waitTime or CONFIG.interval)
 		end
 	end)
 end
 
-startLoop("breakLoop", function() return CONFIG.autoBreak end, autoBreakOnce)
-startLoop("placeLoop", function() return CONFIG.autoPlace end, autoPlaceOnce)
-startLoop("plantLoop", function() return CONFIG.autoPlant end, autoPlantOnce)
+startLoop("breakLoop", function() return CONFIG.autoBreak and not CONFIG.pnbEnabled end, autoBreakOnce)
+startLoop("placeLoop", function() return CONFIG.autoPlace and not CONFIG.pnbEnabled end, autoPlaceOnce)
+startLoop("plantLoop", function() return CONFIG.autoPlant and not CONFIG.pnbEnabled end, autoPlantOnce)
+startLoop("pnbLoop", function() return CONFIG.pnbEnabled end, pnbTick, CONFIG.pnbInterval)
 
 -- ===========================================================================
 -- 8. GUI kecil (tidak menghalangi)
@@ -489,9 +562,10 @@ local function createGui()
 		screenGui.Parent = parent
 	end)
 
+	-- Frame utama (kolom tombol)
 	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(0, 180, 0, 158)
-	frame.Position = UDim2.new(0.5, -90, 1, -162)
+	frame.Size = UDim2.new(0, 180, 0, 210)
+	frame.Position = UDim2.new(0.5, -90, 1, -214)
 	frame.AnchorPoint = Vector2.new(0.5, 1)
 	frame.BackgroundColor3 = Color3.fromRGB(15, 18, 32)
 	frame.BorderSizePixel = 0
@@ -532,7 +606,7 @@ local function createGui()
 	local visible = true
 	local function setVisible(v)
 		visible = v
-		frame.Size = v and UDim2.new(0, 180, 0, 158) or UDim2.new(0, 70, 0, 28)
+		frame.Size = v and UDim2.new(0, 180, 0, 210) or UDim2.new(0, 70, 0, 28)
 		for _, child in ipairs(frame:GetChildren()) do
 			if child ~= title and child ~= hideBtn then
 				child.Visible = v
@@ -572,6 +646,182 @@ local function createGui()
 	addToggle("Auto Break", "autoBreak", 30)
 	addToggle("Auto Place", "autoPlace", 64)
 	addToggle("Auto Plant", "autoPlant", 98)
+	addToggle("PNB Grid", "pnbEnabled", 132)
+
+	-- Tombol buka grid PNB
+	local gridBtn = Instance.new("TextButton")
+	gridBtn.Size = UDim2.new(1, -16, 0, 30)
+	gridBtn.Position = UDim2.new(0, 8, 0, 166)
+	gridBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 220)
+	gridBtn.BorderSizePixel = 0
+	gridBtn.Text = "OPEN GRID PNB"
+	gridBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	gridBtn.Font = Enum.Font.GothamBold
+	gridBtn.TextSize = 12
+	gridBtn.Parent = frame
+
+	local gridCorner = Instance.new("UICorner")
+	gridCorner.CornerRadius = UDim.new(0, 5)
+	gridCorner.Parent = gridBtn
+
+	-- =====================================================================
+	-- Panel Grid PNB (5x5) terpisah, bisa digeser
+	-- =====================================================================
+	local gridPanel = Instance.new("Frame")
+	gridPanel.Size = UDim2.new(0, 190, 0, 250)
+	gridPanel.Position = UDim2.new(0.5, -95, 0.5, -125)
+	gridPanel.BackgroundColor3 = Color3.fromRGB(18, 22, 40)
+	gridPanel.BorderSizePixel = 0
+	gridPanel.Active = true
+	gridPanel.Draggable = true
+	gridPanel.Visible = false
+	gridPanel.Parent = screenGui
+
+	local gpCorner = Instance.new("UICorner")
+	gpCorner.CornerRadius = UDim.new(0, 8)
+	gpCorner.Parent = gridPanel
+
+	local gpTitle = Instance.new("TextLabel")
+	gpTitle.Size = UDim2.new(1, -60, 0, 24)
+	gpTitle.Position = UDim2.new(0, 8, 0, 4)
+	gpTitle.BackgroundTransparency = 1
+	gpTitle.Text = "Grid PNB (5x5)"
+	gpTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	gpTitle.Font = Enum.Font.GothamBold
+	gpTitle.TextSize = 12
+	gpTitle.TextXAlignment = Enum.TextXAlignment.Left
+	gpTitle.Parent = gridPanel
+
+	local gpClose = Instance.new("TextButton")
+	gpClose.Size = UDim2.new(0, 22, 0, 20)
+	gpClose.Position = UDim2.new(1, -26, 0, 4)
+	gpClose.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+	gpClose.BorderSizePixel = 0
+	gpClose.Text = "X"
+	gpClose.TextColor3 = Color3.fromRGB(255, 255, 255)
+	gpClose.Font = Enum.Font.GothamBold
+	gpClose.TextSize = 10
+	gpClose.Parent = gridPanel
+
+	local gpCloseCorner = Instance.new("UICorner")
+	gpCloseCorner.CornerRadius = UDim.new(0, 5)
+	gpCloseCorner.Parent = gpClose
+
+	local gpInfo = Instance.new("TextLabel")
+	gpInfo.Size = UDim2.new(1, -16, 0, 18)
+	gpInfo.Position = UDim2.new(0, 8, 0, 28)
+	gpInfo.BackgroundTransparency = 1
+	gpInfo.Text = "Terpilih: 0"
+	gpInfo.TextColor3 = Color3.fromRGB(180, 200, 230)
+	gpInfo.Font = Enum.Font.Gotham
+	gpInfo.TextSize = 11
+	gpInfo.TextXAlignment = Enum.TextXAlignment.Left
+	gpInfo.Parent = gridPanel
+
+	local gpClear = Instance.new("TextButton")
+	gpClear.Size = UDim2.new(0, 90, 0, 22)
+	gpClear.Position = UDim2.new(1, -98, 0, 26)
+	gpClear.BackgroundColor3 = Color3.fromRGB(255, 180, 40)
+	gpClear.BorderSizePixel = 0
+	gpClear.Text = "CLEAR"
+	gpClear.TextColor3 = Color3.fromRGB(0, 0, 0)
+	gpClear.Font = Enum.Font.GothamBold
+	gpClear.TextSize = 10
+	gpClear.Parent = gridPanel
+
+	local gpClearCorner = Instance.new("UICorner")
+	gpClearCorner.CornerRadius = UDim.new(0, 5)
+	gpClearCorner.Parent = gpClear
+
+	gpClear.MouseButton1Click:Connect(function()
+		clearTileSelection()
+	end)
+
+	-- Grid 5x5 tombol
+	local gridButtons = {}
+	local cellSize = 32
+	for row = 0, 4 do
+		for col = 0, 4 do
+			local cell = Instance.new("TextButton")
+			cell.Size = UDim2.new(0, cellSize, 0, cellSize)
+			cell.Position = UDim2.new(0, 8 + col * (cellSize + 2), 0, 52 + row * (cellSize + 2))
+			cell.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
+			cell.BorderSizePixel = 0
+			cell.Text = "?"
+			cell.TextColor3 = Color3.fromRGB(255, 255, 255)
+			cell.Font = Enum.Font.GothamBold
+			cell.TextSize = 9
+			cell.Parent = gridPanel
+
+			local cCorner = Instance.new("UICorner")
+			cCorner.CornerRadius = UDim.new(0, 4)
+			cCorner.Parent = cell
+
+			gridButtons[(row * 5) + col + 1] = cell
+		end
+	end
+
+	-- Perbarui tampilan grid tiap 0.3 detik
+	task.spawn(function()
+		while true do
+			task.wait(0.3)
+			if not gridPanel.Visible then continue end
+
+			local px, py = getPlayerTile()
+			local selectedCount = 0
+			for key in pairs(selectedTiles) do
+				selectedCount += 1
+			end
+			gpInfo.Text = "Terpilih: " .. selectedCount .. " | Posisi: " .. (px and (px .. "," .. py) or "?")
+
+			if px then
+				local half = math.floor(CONFIG.gridSize / 2)
+				local idx = 1
+				for row = 0, 4 do
+					for col = 0, 4 do
+						local tx = px - half + col
+						local ty = py - half + row
+						local cell = gridButtons[idx]
+						idx += 1
+						if cell then
+							local fg = tileAt("fg", tx, ty)
+							local selected = selectedTiles[tx .. "," .. ty] == true
+							if selected then
+								cell.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+							elseif fg ~= 0 then
+								cell.BackgroundColor3 = Color3.fromRGB(80, 60, 30)
+							else
+								cell.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
+							end
+							cell.Text = (fg == 0 and "0" or tostring(fg))
+						end
+					end
+				end
+			end
+		end
+	end)
+
+	-- Klik sel grid: toggle pilih
+	for idx, cell in ipairs(gridButtons) do
+		cell.MouseButton1Click:Connect(function()
+			local px, py = getPlayerTile()
+			if not px then return end
+			local half = math.floor(CONFIG.gridSize / 2)
+			local row = math.floor((idx - 1) / 5)
+			local col = (idx - 1) % 5
+			local tx = px - half + col
+			local ty = py - half + row
+			toggleTileSelection(tx, ty)
+		end)
+	end
+
+	gridBtn.MouseButton1Click:Connect(function()
+		gridPanel.Visible = not gridPanel.Visible
+	end)
+
+	gpClose.MouseButton1Click:Connect(function()
+		gridPanel.Visible = false
+	end)
 
 	ui.screenGui = screenGui
 end
@@ -590,6 +840,9 @@ _G.GrowBlox = {
 	breakOnce = autoBreakOnce,
 	placeOnce = autoPlaceOnce,
 	plantOnce = autoPlantOnce,
+	pnbTick = pnbTick,
+	toggleTile = toggleTileSelection,
+	clearTiles = clearTileSelection,
 	getState = getState,
 	tileAt = tileAt,
 	scanAround = function(radius)
@@ -601,6 +854,7 @@ _G.GrowBlox = {
 		running.breakLoop = false
 		running.placeLoop = false
 		running.plantLoop = false
+		running.pnbLoop = false
 		if ui.screenGui then
 			pcall(function() ui.screenGui:Destroy() end)
 		end
