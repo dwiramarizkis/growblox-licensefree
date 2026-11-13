@@ -1,12 +1,9 @@
--- GrowBlox Probe (cari fungsi game + hook untuk rekam aksi manual)
+-- GrowBlox Probe v3 (AMAN - tanpa getinfo, tanpa hook remote)
 -- Jalankan SETELAH masuk world:
 --   loadstring(game:HttpGet("https://raw.githubusercontent.com/dwiramarizkis/growblox-licensefree/main/GrowBlox_Probe.lua"))()
 --
--- Langkah:
---   1. Jalankan script ini.
---   2. Lakukan manual di game: pukul/pecah 1-2 tile, tanam 1 seed, panen 1 pohon.
---   3. Lihat console/output -> kirim hasilnya.
--- Script ini TIDAK melakukan aksi apa pun, hanya memasang hook + scan.
+-- Hanya scan getgc. Tidak meng-hook apa pun, jadi tidak akan merusak game.
+-- Tampilkan kandidat fungsi punch/place/tile + upvalue remote-nya.
 
 repeat task.wait() until game:IsLoaded()
 
@@ -31,56 +28,19 @@ local function globalFn(name)
 end
 
 local getgc = globalFn("getgc")
-local getconsts = globalFn("getconstants") or (debug and debug.getconstants)
-local getupval = globalFn("getupvalue") or (debug and debug.getupvalue)
-local getinfo = globalFn("getinfo") or (debug and debug.getinfo)
-local hookfn = globalFn("hookfunction")
+local getconsts = globalFn("getconstants")
+local getupval = globalFn("getupvalue")
+local islclosure = globalFn("islclosure")
 
--- ---------------------------------------------------------------------------
--- 1. Status
--- ---------------------------------------------------------------------------
 add("PlaceId", tostring(game.PlaceId))
 add("Player", tostring(player and player.Name))
-add("Character", player and player.Character and "ADA" or "TIDAK ADA (game tidak pakai Character Roblox)")
 add("getgc", getgc and "ADA" or "TIDAK")
 add("getconstants", getconsts and "ADA" or "TIDAK")
-add("hookfunction", hookfn and "ADA" or "TIDAK")
+add("getupvalue", getupval and "ADA" or "TIDAK")
+add("islclosure", islclosure and "ADA" or "TIDAK")
 
 -- ---------------------------------------------------------------------------
--- 2. Workspace (tanpa Character)
--- ---------------------------------------------------------------------------
-local wsChildren = workspace:GetChildren()
-local baseParts = {}
-local allDes = workspace:GetDescendants()
-for _, d in ipairs(allDes) do
-	if d:IsA("BasePart") then
-		baseParts[#baseParts + 1] = d
-	end
-end
-add("Workspace children", #wsChildren)
-local wsNames = {}
-for _, c in ipairs(wsChildren) do
-	wsNames[#wsNames + 1] = c.Name .. " [" .. c.ClassName .. "]"
-end
-add("WS top", table.concat(wsNames, " | "))
-
-local nameCounts = {}
-for _, p in ipairs(baseParts) do
-	nameCounts[p.Name] = (nameCounts[p.Name] or 0) + 1
-end
-local unique = {}
-for name, n in pairs(nameCounts) do
-	unique[#unique + 1] = { name = name, n = n }
-end
-table.sort(unique, function(a, b) return a.n > b.n end)
-local uniqStr = {}
-for i = 1, math.min(40, #unique) do
-	uniqStr[#uniqStr + 1] = unique[i].name .. " x" .. unique[i].n
-end
-add("BaseParts", tostring(#baseParts) .. " | unik: " .. table.concat(uniqStr, ", "))
-
--- ---------------------------------------------------------------------------
--- 3. Deskripsi argumen
+-- Utilitas
 -- ---------------------------------------------------------------------------
 local function describe(v, depth)
 	depth = depth or 0
@@ -89,7 +49,7 @@ local function describe(v, depth)
 	if v == nil then return "nil" end
 	if tv == "boolean" or tv == "number" then return tostring(v) end
 	if tv == "string" then
-		if #v > 60 then return ("%q"):format(v:sub(1, 60) .. "...") end
+		if #v > 50 then return ("%q"):format(v:sub(1, 50) .. "...") end
 		return ("%q"):format(v)
 	end
 	if tv == "table" then
@@ -114,108 +74,12 @@ local function describe(v, depth)
 		end)
 		return tv
 	end
+	if tv == "function" then
+		return "function"
+	end
 	return tv
 end
 
--- ---------------------------------------------------------------------------
--- 4. Scan getgc untuk WORLD, STATE, INVENTORY, ITEMDB
--- ---------------------------------------------------------------------------
-local worldTbl, stateFn, invTbl, itemDb
-
-local function isWorldTbl(v)
-	return type(rawget(v, "fg")) == "table" and type(rawget(v, "bg")) == "table"
-		and type(rawget(v, "w")) == "number" and type(rawget(v, "h")) == "number"
-		and rawget(v, "spawn") ~= nil
-end
-
-local function isInvTbl(v)
-	return type(rawget(v, "slots")) == "table" and (rawget(v, "capacity") ~= nil or type(rawget(v, "count")) == "function")
-end
-
-local function isItemDb(v)
-	if type(v) ~= "table" then return false end
-	local count = 0
-	for id, item in pairs(v) do
-		if type(id) == "number" and type(item) == "table" and type(item.name) == "string" then
-			count = count + 1
-			if count > 20 then return true end
-		end
-	end
-	return false
-end
-
-if getgc then
-	local list = getgc(true)
-	add("GC tables/functions", tostring(#list))
-
-	for _, v in ipairs(list) do
-		if type(v) == "table" then
-			if not worldTbl then
-				local ok, isW = pcall(isWorldTbl, v)
-				if ok and isW then worldTbl = v end
-			end
-			if not invTbl then
-				local ok, isI = pcall(isInvTbl, v)
-				if ok and isI then invTbl = v end
-			end
-			if not itemDb then
-				local ok, isD = pcall(isItemDb, v)
-				if ok and isD then itemDb = v end
-			end
-			if not stateFn then
-				local fn = rawget(v, "state")
-				if type(fn) == "function" then
-					local ok, s = pcall(fn)
-					if ok and type(s) == "table" and type(s.x) == "number" and type(s.y) == "number" then
-						stateFn = fn
-					end
-				end
-			end
-		end
-	end
-end
-
-add("World table", worldTbl and ("ADA w=" .. tostring(worldTbl.w) .. " h=" .. tostring(worldTbl.h) .. " spawn=" .. describe(worldTbl.spawn)) or "TIDAK")
-add("State function", stateFn and "ADA" or "TIDAK")
-if stateFn then
-	local ok, s = pcall(stateFn)
-	if ok then
-		add("State value", describe(s))
-	else
-		add("State value", "ERROR " .. tostring(s))
-	end
-end
-add("Inventory table", invTbl and "ADA" or "TIDAK")
-if invTbl then
-	add("Inventory slots", tostring(#(invTbl.slots or {})))
-	local cntFn = rawget(invTbl, "count")
-	if type(cntFn) == "function" then
-		local sample = {}
-		local n = 0
-		for _, slot in ipairs(invTbl.slots) do
-			n = n + 1
-			if n <= 15 and type(slot) == "table" then
-				sample[#sample + 1] = describe(slot)
-			end
-		end
-		add("Inventory sample", table.concat(sample, " | "))
-	end
-end
-add("ItemDB", itemDb and "ADA" or "TIDAK")
-if itemDb then
-	local arr = {}
-	for id, item in pairs(itemDb) do
-		if type(id) == "number" and type(item) == "table" and type(item.name) == "string" then
-			arr[#arr + 1] = tostring(id) .. ":" .. tostring(item.name)
-			if #arr >= 30 then break end
-		end
-	end
-	add("ItemDB sample", table.concat(arr, ", "))
-end
-
--- ---------------------------------------------------------------------------
--- 5. Cari & hook fungsi punch / place / tile
--- ---------------------------------------------------------------------------
 local function hasConst(fn, target)
 	if not getconsts then return false end
 	local ok, consts = pcall(getconsts, fn)
@@ -239,60 +103,10 @@ local function hasConstPair(fn, a, b)
 	return false
 end
 
-local hookLogs = {}
-local function safeHook(fn, label)
-	if not hookfn or type(fn) ~= "function" then return false end
-	local orig = fn
-	local ok = pcall(function()
-		hookfn(orig, function(...)
-			local args = { ... }
-			local argStr = {}
-			for i = 1, #args do argStr[#argStr + 1] = describe(args[i]) end
-			local line = label .. "(" .. table.concat(argStr, ", ") .. ")"
-			hookLogs[#hookLogs + 1] = line
-			print("[Hook] " .. line)
-			local results = { pcall(orig, ...) }
-			if not results[1] then
-				print("[Hook] " .. label .. " ERROR: " .. tostring(results[2]))
-				hookLogs[#hookLogs + 1] = label .. " ERROR: " .. tostring(results[2])
-			else
-				local resStr = {}
-				for i = 2, #results do resStr[#resStr + 1] = describe(results[i]) end
-				if #resStr > 0 then
-					print("[Hook] " .. label .. " -> " .. table.concat(resStr, ", "))
-					hookLogs[#hookLogs + 1] = label .. " -> " .. table.concat(resStr, ", ")
-				end
-			end
-			if results[1] then
-				return unpack(results, 2)
-			else
-				error(results[2], 0)
-			end
-		end)
-	end)
-	return ok
-end
-
-local punchHooks = {}
-local placeHooks = {}
-local tileHooks = {}
-
--- Dapatkan sumber fungsi tanpa wajib debug.getinfo.
-local function fnSource(f)
-	if getinfo then
-		local ok, src = pcall(getinfo, f, "s")
-		if ok and type(src) == "string" and src ~= "" then
-			return tostring(src)
-		end
-	end
-	return "?"
-end
-
--- Daftar konstanta unik (dibatasi) untuk ditampilkan.
-local function constPreview(f, limit)
-	limit = limit or 12
+local function constPreview(fn, limit)
+	limit = limit or 14
 	if not getconsts then return "" end
-	local ok, consts = pcall(getconsts, f)
+	local ok, consts = pcall(getconsts, fn)
 	if not ok or type(consts) ~= "table" then return "" end
 	local seen = {}
 	local out = {}
@@ -306,99 +120,110 @@ local function constPreview(f, limit)
 	return table.concat(out, " | ")
 end
 
+local function upvaluePreview(fn, limit)
+	limit = limit or 10
+	if not getupval then return "" end
+	local out = {}
+	for i = 1, 40 do
+		local ok, name, val = pcall(getupval, fn, i)
+		if not ok then break end
+		if val ~= nil then
+			local remoteName = nil
+			pcall(function()
+				if typeof(val) == "Instance" and (val:IsA("RemoteEvent") or val:IsA("RemoteFunction")) then
+					remoteName = val:GetFullName()
+				end
+			end)
+			if remoteName then
+				out[#out + 1] = i .. ":" .. tostring(name) .. "=REMOTE(" .. remoteName .. ")"
+			elseif type(val) == "table" then
+				out[#out + 1] = i .. ":" .. tostring(name) .. "=table"
+			elseif type(val) == "function" then
+				out[#out + 1] = i .. ":" .. tostring(name) .. "=function"
+			else
+				out[#out + 1] = i .. ":" .. tostring(name) .. "=" .. describe(val, 1)
+			end
+			if #out >= limit then break end
+		end
+	end
+	return table.concat(out, " | ")
+end
+
+-- ---------------------------------------------------------------------------
+-- Scan GC
+-- ---------------------------------------------------------------------------
+local punchCands = {}
+local placeCands = {}
+local tileCands = {}
+local stateCands = {}
+local worldCands = {}
+
 if getgc then
 	local scanned = 0
-	local list = getgc(true)
-	for _, v in ipairs(list) do
+	for _, v in ipairs(getgc(true)) do
 		if type(v) == "function" then
 			scanned = scanned + 1
-			if #punchHooks < 8 and (hasConst(v, "punchEvent") or hasConstPair(v, "punch", "punch_miss") or hasConstPair(v, "punch", "newCrack") or hasConstPair(v, "punch", "HarvestProvider")) then
-				table.insert(punchHooks, { fn = v, src = fnSource(v), consts = constPreview(v) })
-			end
-			if #placeHooks < 8 and (hasConstPair(v, "placedAt", "flips") or hasConstPair(v, "cant_place_tile", "placedAt") or hasConstPair(v, "cant_place_tile", "flips")) then
-				table.insert(placeHooks, { fn = v, src = fnSource(v), consts = constPreview(v) })
-			end
-			if #tileHooks < 8 and (hasConst(v, "tileChanged") or hasConst(v, "tile_removed")) then
-				table.insert(tileHooks, { fn = v, src = fnSource(v), consts = constPreview(v) })
+			if islclosure then
+				local ok, isL = pcall(islclosure, v)
+				if not ok or not isL then
+					-- lewati fungsi C
+				else
+					if #punchCands < 10 and (hasConst(v, "punchEvent") or hasConstPair(v, "punch", "punch_miss") or hasConstPair(v, "punch", "newCrack") or hasConstPair(v, "punch", "HarvestProvider") or hasConstPair(v, "punch", "punchFx")) then
+						punchCands[#punchCands + 1] = v
+					end
+					if #placeCands < 10 and (hasConstPair(v, "placedAt", "flips") or hasConstPair(v, "cant_place_tile", "placedAt") or hasConstPair(v, "cant_place_tile", "flips")) then
+						placeCands[#placeCands + 1] = v
+					end
+					if #tileCands < 10 and (hasConst(v, "tileChanged") or hasConst(v, "tile_removed")) then
+						tileCands[#tileCands + 1] = v
+					end
+					if #stateCands < 5 and hasConst(v, "airJump") then
+						stateCands[#stateCands + 1] = v
+					end
+				end
+			else
+				-- Tanpa islclosure tetap proses (risiko kecil hanya saat getconstants)
+				if #punchCands < 10 and (hasConst(v, "punchEvent") or hasConstPair(v, "punch", "punch_miss") or hasConstPair(v, "punch", "newCrack") or hasConstPair(v, "punch", "HarvestProvider") or hasConstPair(v, "punch", "punchFx")) then
+					punchCands[#punchCands + 1] = v
+				end
+				if #placeCands < 10 and (hasConstPair(v, "placedAt", "flips") or hasConstPair(v, "cant_place_tile", "placedAt") or hasConstPair(v, "cant_place_tile", "flips")) then
+					placeCands[#placeCands + 1] = v
+				end
+				if #tileCands < 10 and (hasConst(v, "tileChanged") or hasConst(v, "tile_removed")) then
+					tileCands[#tileCands + 1] = v
+				end
 			end
 		end
 	end
 	add("GC functions scanned", tostring(scanned))
 end
 
-add("Punch candidates", tostring(#punchHooks))
-for i, h in ipairs(punchHooks) do
-	add("Punch" .. i, h.src)
-	add("Punch" .. i .. ".const", h.consts)
-	safeHook(h.fn, "PUNCH" .. i)
+add("Punch candidates", tostring(#punchCands))
+for i, fn in ipairs(punchCands) do
+	add("PUNCH" .. i .. ".const", constPreview(fn))
+	add("PUNCH" .. i .. ".upvalue", upvaluePreview(fn))
 end
-add("Place candidates", tostring(#placeHooks))
-for i, h in ipairs(placeHooks) do
-	add("Place" .. i, h.src)
-	add("Place" .. i .. ".const", h.consts)
-	safeHook(h.fn, "PLACE" .. i)
+
+add("Place candidates", tostring(#placeCands))
+for i, fn in ipairs(placeCands) do
+	add("PLACE" .. i .. ".const", constPreview(fn))
+	add("PLACE" .. i .. ".upvalue", upvaluePreview(fn))
 end
-add("Tile candidates", tostring(#tileHooks))
-for i, h in ipairs(tileHooks) do
-	add("Tile" .. i, h.src)
-	add("Tile" .. i .. ".const", h.consts)
-	safeHook(h.fn, "TILE" .. i)
+
+add("Tile candidates", tostring(#tileCands))
+for i, fn in ipairs(tileCands) do
+	add("TILE" .. i .. ".const", constPreview(fn))
+	add("TILE" .. i .. ".upvalue", upvaluePreview(fn))
+end
+
+add("State candidates", tostring(#stateCands))
+for i, fn in ipairs(stateCands) do
+	add("STATE" .. i .. ".const", constPreview(fn))
+	add("STATE" .. i .. ".upvalue", upvaluePreview(fn))
 end
 
 -- ---------------------------------------------------------------------------
--- 6. Hook semua RemoteEvent/RemoteFunction juga
--- ---------------------------------------------------------------------------
-local remotes = {}
-local function collectRemotes(parent, depth)
-	if depth > 4 then return end
-	for _, c in ipairs(parent:GetChildren()) do
-		if c:IsA("RemoteEvent") or c:IsA("RemoteFunction") then
-			remotes[#remotes + 1] = c
-		end
-		if c:IsA("Folder") or c:IsA("Configuration") or c:IsA("Model") then
-			collectRemotes(c, depth + 1)
-		end
-	end
-end
-collectRemotes(ReplicatedStorage, 0)
-local hookedRemote = 0
-if hookfn then
-	for _, r in ipairs(remotes) do
-		if r:IsA("RemoteEvent") then
-			pcall(function()
-				local orig = r.FireServer
-				hookfn(orig, function(self, ...)
-					local args = { ... }
-					local s = {}
-					for i = 1, #args do s[#s + 1] = describe(args[i]) end
-					print("[RemoteFire] " .. r:GetFullName() .. " (" .. table.concat(s, ", ") .. ")")
-					return orig(self, ...)
-				end)
-				hookedRemote = hookedRemote + 1
-			end)
-		elseif r:IsA("RemoteFunction") then
-			pcall(function()
-				local orig = r.InvokeServer
-				hookfn(orig, function(self, ...)
-					local args = { ... }
-					local s = {}
-					for i = 1, #args do s[#s + 1] = describe(args[i]) end
-					print("[RemoteInvoke] " .. r:GetFullName() .. " (" .. table.concat(s, ", ") .. ")")
-					local results = { orig(self, ...) }
-					local rs = {}
-					for i = 1, #results do rs[#rs + 1] = describe(results[i]) end
-					print("[RemoteInvoke] " .. r:GetFullName() .. " -> (" .. table.concat(rs, ", ") .. ")")
-					return unpack(results)
-				end)
-				hookedRemote = hookedRemote + 1
-			end)
-		end
-	end
-end
-add("Remotes hooked", tostring(hookedRemote))
-
--- ---------------------------------------------------------------------------
--- 7. GUI
+-- GUI kecil di kiri-bawah
 -- ---------------------------------------------------------------------------
 local report = table.concat(lines, "\n")
 
@@ -415,7 +240,6 @@ pcall(function()
 	screenGui.Parent = parent
 end)
 
--- Frame kecil di pojok kiri-bawah, bisa digeser & ditutup.
 local frame = Instance.new("Frame")
 frame.Size = UDim2.new(0, 310, 0, 190)
 frame.Position = UDim2.new(0, 8, 1, -198)
@@ -433,7 +257,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -70, 0, 26)
 title.Position = UDim2.new(0, 10, 0, 6)
 title.BackgroundTransparency = 1
-title.Text = "GrowBlox Probe (bisa ditutup)"
+title.Text = "GrowBlox Probe v3"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 12
@@ -470,7 +294,6 @@ local copyCorner = Instance.new("UICorner")
 copyCorner.CornerRadius = UDim.new(0, 5)
 copyCorner.Parent = copyButton
 
--- Toggle tampilkan/sembunyikan isi. Saat disembunyikan, GUI tidak menghalangi.
 local contentVisible = true
 local function setContentVisible(state)
 	contentVisible = state
@@ -539,4 +362,4 @@ pcall(function()
 	if writefile then writefile("GrowBlox_Probe.txt", report) end
 end)
 
-add("INFO", "GUI kecil di kiri-bawah. Tekan X untuk menyembunyikan. Sekarang lakukan manual: pukul/pecah tile, tanam seed, panen pohon. Hasil tetap tercetak di console dan tersimpan di GrowBlox_Probe.txt.")
+add("INFO", "Probe v3 aman: tanpa hook. Kirim hasil PUNCH/PLACE/TILE/STATE candidates (terutama .upvalue).")
