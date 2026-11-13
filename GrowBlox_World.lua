@@ -217,30 +217,65 @@ if invTbl then
 end
 
 -- ---------------------------------------------------------------------------
--- 4. ItemDB (filter nama yang relevan)
+-- 4. ItemDB (TAMPILKAN SEMUA - total item sedikit)
 -- ---------------------------------------------------------------------------
 add("ItemDB", itemDb and "ADA" or "TIDAK")
 if itemDb then
-	local relevant = {}
-	local total = 0
+	local items = {}
 	for id, item in pairs(itemDb) do
-		if type(id) == "number" and type(item) == "table" and type(item.name) == "string" then
-			total = total + 1
-			local lc = item.name:lower()
-			if lc:find("dirt") or lc:find("seed") or lc:find("sugar") or lc:find("cane")
-				or lc:find("block") or lc:find("grass") or lc:find("tree") or lc:find("plant")
-				or lc:find("crop") or lc:find("wheat") or lc:find("farm") then
-				relevant[#relevant + 1] = tostring(id) .. ":" .. tostring(item.name)
-			end
+		if type(id) == "number" and type(item) == "table" then
+			items[#items + 1] = { id = id, item = item }
 		end
 	end
-	add("ItemDB total", tostring(total))
-	add("ItemDB relevant", tostring(#relevant))
-	for i, r in ipairs(relevant) do
-		add("Item" .. i, r)
-		if i >= 60 then break end
+	table.sort(items, function(a, b) return a.id < b.id end)
+	add("ItemDB total", tostring(#items))
+	for _, entry in ipairs(items) do
+		local id = entry.id
+		local item = entry.item
+		local name = type(item.name) == "string" and item.name or "?"
+		local kind = type(item.kind) == "string" and item.kind or "?"
+		local desc = type(item.desc) == "string" and item.desc:sub(1, 40) or ""
+		add("Item" .. id, name .. " | kind=" .. kind .. " | " .. desc)
 	end
 end
+
+-- ---------------------------------------------------------------------------
+-- 5. Sample fg/bg di sekitar karakter
+-- ---------------------------------------------------------------------------
+pcall(function()
+	if worldTbl and stateFn then
+		local ok, s = pcall(stateFn)
+		if ok and type(s) == "table" and type(s.x) == "number" and type(s.y) == "number" then
+			local px = math.floor(s.x + 0.5)
+			local py = math.floor(s.y + 0.5)
+			add("Player tile", "x=" .. px .. " y=" .. py .. " facing=" .. tostring(s.facing))
+			local fg = worldTbl.fg
+			local bg = worldTbl.bg
+			local linesFg = {}
+			local linesBg = {}
+			for y = py - 3, py + 3 do
+				local rowFg = {}
+				local rowBg = {}
+				for x = px - 5, px + 5 do
+					local fgVal = "?"
+					local bgVal = "?"
+					pcall(function()
+						local r = fg[y]
+						if r then fgVal = tostring(r[x]) end
+						local rb = bg[y]
+						if rb then bgVal = tostring(rb[x]) end
+					end)
+					rowFg[#rowFg + 1] = string.format("%2d:%-4s", x, fgVal)
+					rowBg[#rowBg + 1] = string.format("%2d:%-4s", x, bgVal)
+				end
+				linesFg[#linesFg + 1] = "y=" .. y .. " fg " .. table.concat(rowFg, " ")
+				linesBg[#linesBg + 1] = "y=" .. y .. " bg " .. table.concat(rowBg, " ")
+			end
+			for _, l in ipairs(linesFg) do add("FG", l) end
+			for _, l in ipairs(linesBg) do add("BG", l) end
+		end
+	end
+end)
 
 -- ---------------------------------------------------------------------------
 -- GUI kecil
