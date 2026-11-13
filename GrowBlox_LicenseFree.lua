@@ -687,7 +687,7 @@ local function createGui()
 		visible = v
 		frame.Size = v and UDim2.new(0, 180, 0, 210) or UDim2.new(0, 70, 0, 28)
 		for _, child in ipairs(frame:GetChildren()) do
-			if child ~= title and child ~= hideBtn then
+			if child ~= title and child ~= hideBtn and child:IsA("GuiObject") then
 				child.Visible = v
 			end
 		end
