@@ -80,10 +80,16 @@ local function describe(v, depth)
 	return tv
 end
 
-local function hasConst(fn, target)
-	if not getconsts then return false end
+local function getConsts(fn)
+	if not getconsts then return nil end
 	local ok, consts = pcall(getconsts, fn)
-	if not ok or type(consts) ~= "table" then return false end
+	if not ok or type(consts) ~= "table" then return nil end
+	return consts
+end
+
+local function hasConst(fn, target)
+	local consts = getConsts(fn)
+	if not consts then return false end
 	for _, c in ipairs(consts) do
 		if c == target then return true end
 	end
@@ -91,9 +97,8 @@ local function hasConst(fn, target)
 end
 
 local function hasConstPair(fn, a, b)
-	if not getconsts then return false end
-	local ok, consts = pcall(getconsts, fn)
-	if not ok or type(consts) ~= "table" then return false end
+	local consts = getConsts(fn)
+	if not consts then return false end
 	local hasA, hasB = false, false
 	for _, c in ipairs(consts) do
 		if c == a then hasA = true end
@@ -101,6 +106,24 @@ local function hasConstPair(fn, a, b)
 		if hasA and hasB then return true end
 	end
 	return false
+end
+
+local function countConstMatches(fn, keywords)
+	local consts = getConsts(fn)
+	if not consts then return 0 end
+	local n = 0
+	for _, c in ipairs(consts) do
+		if type(c) == "string" then
+			local lc = c:lower()
+			for _, kw in ipairs(keywords) do
+				if lc:find(kw, 1, true) then
+					n = n + 1
+					break
+				end
+			end
+		end
+	end
+	return n
 end
 
 local function constPreview(fn, limit)
@@ -156,10 +179,19 @@ local punchCands = {}
 local placeCands = {}
 local tileCands = {}
 local stateCands = {}
+local interestingCands = {}
+
+local INTERESTING = {
+	"punch", "place", "break", "tile", "seed", "grow", "harvest",
+	"farm", "plant", "water", "dirt", "sugarcane", "sugar", "cane",
+	"collect", "drop", "world", "inventory", "tree", "crop",
+	"wrench", "settile", "remote",
+}
 
 if getgc then
 	local scanned = 0
-	for _, v in ipairs(getgc(true)) do
+	local allList = getgc(true)
+	for _, v in ipairs(allList) do
 		if type(v) == "function" then
 			scanned = scanned + 1
 			if #punchCands < 10 and (hasConst(v, "punchEvent") or hasConstPair(v, "punch", "punch_miss") or hasConstPair(v, "punch", "newCrack") or hasConstPair(v, "punch", "HarvestProvider") or hasConstPair(v, "punch", "punchFx")) then
@@ -174,9 +206,17 @@ if getgc then
 			if #stateCands < 5 and hasConst(v, "airJump") then
 				stateCands[#stateCands + 1] = v
 			end
+
+			if #interestingCands < 30 then
+				local n = countConstMatches(v, INTERESTING)
+				if n >= 3 then
+					interestingCands[#interestingCands + 1] = { fn = v, matches = n }
+				end
+			end
 		end
 	end
 	add("GC functions scanned", tostring(scanned))
+	add("GC total objects", tostring(#allList))
 end
 
 add("Punch candidates", tostring(#punchCands))
@@ -201,6 +241,13 @@ add("State candidates", tostring(#stateCands))
 for i, fn in ipairs(stateCands) do
 	add("STATE" .. i .. ".const", constPreview(fn))
 	add("STATE" .. i .. ".upvalue", upvaluePreview(fn))
+end
+
+add("Interesting candidates", tostring(#interestingCands))
+for i, entry in ipairs(interestingCands) do
+	add("INTERESTING" .. i .. ".matches", tostring(entry.matches))
+	add("INTERESTING" .. i .. ".const", constPreview(entry.fn, 20))
+	add("INTERESTING" .. i .. ".upvalue", upvaluePreview(entry.fn, 12))
 end
 
 -- ---------------------------------------------------------------------------
