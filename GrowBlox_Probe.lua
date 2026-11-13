@@ -156,42 +156,23 @@ local punchCands = {}
 local placeCands = {}
 local tileCands = {}
 local stateCands = {}
-local worldCands = {}
 
 if getgc then
 	local scanned = 0
 	for _, v in ipairs(getgc(true)) do
 		if type(v) == "function" then
 			scanned = scanned + 1
-			if islclosure then
-				local ok, isL = pcall(islclosure, v)
-				if not ok or not isL then
-					-- lewati fungsi C
-				else
-					if #punchCands < 10 and (hasConst(v, "punchEvent") or hasConstPair(v, "punch", "punch_miss") or hasConstPair(v, "punch", "newCrack") or hasConstPair(v, "punch", "HarvestProvider") or hasConstPair(v, "punch", "punchFx")) then
-						punchCands[#punchCands + 1] = v
-					end
-					if #placeCands < 10 and (hasConstPair(v, "placedAt", "flips") or hasConstPair(v, "cant_place_tile", "placedAt") or hasConstPair(v, "cant_place_tile", "flips")) then
-						placeCands[#placeCands + 1] = v
-					end
-					if #tileCands < 10 and (hasConst(v, "tileChanged") or hasConst(v, "tile_removed")) then
-						tileCands[#tileCands + 1] = v
-					end
-					if #stateCands < 5 and hasConst(v, "airJump") then
-						stateCands[#stateCands + 1] = v
-					end
-				end
-			else
-				-- Tanpa islclosure tetap proses (risiko kecil hanya saat getconstants)
-				if #punchCands < 10 and (hasConst(v, "punchEvent") or hasConstPair(v, "punch", "punch_miss") or hasConstPair(v, "punch", "newCrack") or hasConstPair(v, "punch", "HarvestProvider") or hasConstPair(v, "punch", "punchFx")) then
-					punchCands[#punchCands + 1] = v
-				end
-				if #placeCands < 10 and (hasConstPair(v, "placedAt", "flips") or hasConstPair(v, "cant_place_tile", "placedAt") or hasConstPair(v, "cant_place_tile", "flips")) then
-					placeCands[#placeCands + 1] = v
-				end
-				if #tileCands < 10 and (hasConst(v, "tileChanged") or hasConst(v, "tile_removed")) then
-					tileCands[#tileCands + 1] = v
-				end
+			if #punchCands < 10 and (hasConst(v, "punchEvent") or hasConstPair(v, "punch", "punch_miss") or hasConstPair(v, "punch", "newCrack") or hasConstPair(v, "punch", "HarvestProvider") or hasConstPair(v, "punch", "punchFx")) then
+				punchCands[#punchCands + 1] = v
+			end
+			if #placeCands < 10 and (hasConstPair(v, "placedAt", "flips") or hasConstPair(v, "cant_place_tile", "placedAt") or hasConstPair(v, "cant_place_tile", "flips")) then
+				placeCands[#placeCands + 1] = v
+			end
+			if #tileCands < 10 and (hasConst(v, "tileChanged") or hasConst(v, "tile_removed")) then
+				tileCands[#tileCands + 1] = v
+			end
+			if #stateCands < 5 and hasConst(v, "airJump") then
+				stateCands[#stateCands + 1] = v
 			end
 		end
 	end
