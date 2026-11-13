@@ -272,28 +272,71 @@ local function getPlayerTile()
 	return math.floor(s.x), math.floor(s.y - 0.475)
 end
 
+-- Hitung ukuran world dari struktur grid (world table tidak selalu punya w/h)
+local function worldSize(layer)
+	local w = Refs.World
+	if not w then return nil end
+	local grid = w[layer]
+	if type(grid) ~= "table" then return nil end
+
+	-- w/h eksplisit
+	local ww = tonumber(rawget(w, "w") or rawget(w, "width"))
+	local hh = tonumber(rawget(w, "h") or rawget(w, "height"))
+	if ww and hh and ww > 0 and hh > 0 then
+		return ww, hh
+	end
+
+	-- Hitung dari grid: #grid = height
+	local h = #grid
+	if h and h > 0 then
+		-- width = panjang baris pertama yang berbentuk table
+		local row = grid[1]
+		if type(row) == "table" then
+			local width = #row
+			if width and width > 0 then
+				return width, h
+			end
+			-- baris sparse: cari index maksimum
+			local maxX = 0
+			for x in pairs(row) do
+				if type(x) == "number" and x > maxX then maxX = x end
+			end
+			if maxX > 0 then return maxX, h end
+		end
+	end
+	return nil
+end
+
 local function tileAt(layer, x, y)
 	local w = Refs.World
 	if not w then return nil end
 	local grid = w[layer]
 	if not grid then return nil end
 
-	-- Coba akses sebagai [y][x]
+	-- 1. [y][x]
 	local row = grid[y]
 	if type(row) == "table" then
-		return row[x] or 0
+		local v = row[x]
+		if v ~= nil then return v end
 	end
 
-	-- Fallback: [x][y]
+	-- 2. [x][y]
 	row = grid[x]
 	if type(row) == "table" then
-		return row[y] or 0
+		local v = row[y]
+		if v ~= nil then return v end
 	end
 
-	-- Fallback: grid[y] langsung id
-	local direct = grid[y]
-	if type(direct) == "number" then
-		return direct
+	-- 3. Flat array (1D) [y * width + x] atau [x * height + y]
+	local ww, hh = worldSize(layer)
+	if ww and hh then
+		local idx = (y * ww) + x
+		local v = grid[idx]
+		if v ~= nil then return v end
+
+		idx = (x * hh) + y
+		v = grid[idx]
+		if v ~= nil then return v end
 	end
 
 	return 0
@@ -304,6 +347,8 @@ local function debugGrid()
 	local ok, err = pcall(function()
 		local px, py = getPlayerTile()
 		if not px then print("[GrowBlox] debugGrid: no state") return end
+		local ww, hh = worldSize("fg")
+		print("[GrowBlox] worldSize fg: w=" .. tostring(ww) .. " h=" .. tostring(hh))
 		for y = py - 1, py + 1 do
 			local row = {}
 			for x = px - 1, px + 1 do
