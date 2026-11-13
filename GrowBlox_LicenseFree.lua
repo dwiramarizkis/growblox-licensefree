@@ -740,6 +740,13 @@ local function startLoop(name, enabled, action, waitTime)
 					warn("[GrowBlox] loop " .. name .. " error: " .. tostring(a))
 				elseif a == true then
 					print("[GrowBlox] " .. name .. " -> " .. tostring(a) .. " " .. tostring(b))
+				else
+					-- aksi false; cetak status setiap 3 detik agar tidak banjir
+					local now = os.clock()
+					if not _G._lastLoopLog or (now - _G._lastLoopLog) > 3 then
+						_G._lastLoopLog = now
+						print("[GrowBlox] " .. name .. " -> " .. tostring(a) .. " " .. tostring(b))
+					end
 				end
 			end
 			task.wait(waitTime or CONFIG.interval)
@@ -747,7 +754,7 @@ local function startLoop(name, enabled, action, waitTime)
 	end)
 end
 
-startLoop("breakLoop", function() return CONFIG.autoBreak and not CONFIG.pnbEnabled end, autoBreakOnce, CONFIG.breakMs / 1000)
+startLoop("breakLoop", function() return CONFIG.autoBreak and not CONFIG.pnbEnabled end, autoBreakOnce, CONFIG.interval)
 startLoop("placeLoop", function() return CONFIG.autoPlace and not CONFIG.pnbEnabled end, autoPlaceOnce)
 startLoop("plantLoop", function() return CONFIG.autoPlant and not CONFIG.pnbEnabled end, autoPlantOnce)
 startLoop("pnbLoop", function() return CONFIG.pnbEnabled end, pnbTick, CONFIG.pnbInterval)
