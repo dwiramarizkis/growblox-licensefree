@@ -272,19 +272,6 @@ local function getPlayerTile()
 	return math.floor(s.x), math.floor(s.y - 0.475)
 end
 
--- Debug: cetak grid 3x3 di sekitar pemain
-local function debugGrid()
-	local px, py = getPlayerTile()
-	if not px then print("[GrowBlox] debugGrid: no state") return end
-	for y = py - 1, py + 1 do
-		local row = {}
-		for x = px - 1, px + 1 do
-			row[#row + 1] = x .. ":" .. tostring(tileAt("fg", x, y) or "?")
-		end
-		print("[GrowBlox] grid y=" .. y .. " " .. table.concat(row, " "))
-	end
-end
-
 local function tileAt(layer, x, y)
 	local w = Refs.World
 	if not w then return nil end
@@ -297,19 +284,37 @@ local function tileAt(layer, x, y)
 		return row[x] or 0
 	end
 
-	-- Fallback: [x][y] (beberapa game memakai urutan terbalik)
+	-- Fallback: [x][y]
 	row = grid[x]
 	if type(row) == "table" then
 		return row[y] or 0
 	end
 
-	-- Fallback: grid[y] langsung berisi id (bukan baris)
+	-- Fallback: grid[y] langsung id
 	local direct = grid[y]
 	if type(direct) == "number" then
 		return direct
 	end
 
 	return 0
+end
+
+-- Debug yang aman: tangkap semua error
+local function debugGrid()
+	local ok, err = pcall(function()
+		local px, py = getPlayerTile()
+		if not px then print("[GrowBlox] debugGrid: no state") return end
+		for y = py - 1, py + 1 do
+			local row = {}
+			for x = px - 1, px + 1 do
+				row[#row + 1] = x .. ":" .. tostring(tileAt("fg", x, y) or "?")
+			end
+			print("[GrowBlox] grid y=" .. y .. " " .. table.concat(row, " "))
+		end
+	end)
+	if not ok then
+		print("[GrowBlox] debugGrid error: " .. tostring(err))
+	end
 end
 
 local function fgIdAt(x, y)
@@ -604,32 +609,39 @@ local function autoBreakOnce()
 	return false, "break failed: " .. tostring(r)
 end
 
--- Debug pertama kali: tampilkan grid supaya tahu tile terdeteksi benar
-task.spawn(function()
-	task.wait(2)
-	debugGrid()
-end)
-
--- Juga cetak status playerState + jumlah tile terdeteksi
+-- Debug awal: tampilkan status state + tile di sekitar
 task.spawn(function()
 	task.wait(3)
-	local s = playerState()
-	if s then
-		print(string.format("[GrowBlox] state: x=%.2f y=%.2f grounded=%s facing=%s",
-			s.x, s.y, tostring(s.grounded), tostring(s.facing)))
-	else
-		print("[GrowBlox] state: TIDAK ADA")
-	end
-	local px, py = getPlayerTile()
-	if px then
-		local tiles = tilesAround(px, py, CONFIG.range)
-		print("[GrowBlox] tilesAround count=" .. tostring(#tiles))
-		for i = 1, math.min(10, #tiles) do
-			local t = tiles[i]
-			print(string.format("[GrowBlox]   tile %d: x=%d y=%d fg=%s", i, t.x, t.y, tostring(t.fg)))
+	local ok, err = pcall(function()
+		local s = playerState()
+		if s then
+			print(string.format("[GrowBlox] state: x=%.2f y=%.2f grounded=%s facing=%s",
+				s.x, s.y, tostring(s.grounded), tostring(s.facing)))
+		else
+			print("[GrowBlox] state: TIDAK ADA")
 		end
-	else
-		print("[GrowBlox] playerTile: TIDAK ADA")
+		local px, py = getPlayerTile()
+		if px then
+			print("[GrowBlox] playerTile=" .. px .. "," .. py)
+			for y = py - 1, py + 1 do
+				local row = {}
+				for x = px - 1, px + 1 do
+					row[#row + 1] = x .. ":" .. tostring(tileAt("fg", x, y) or "?")
+				end
+				print("[GrowBlox] grid y=" .. y .. " " .. table.concat(row, " "))
+			end
+			local tiles = tilesAround(px, py, CONFIG.range)
+			print("[GrowBlox] tilesAround count=" .. tostring(#tiles))
+			for i = 1, math.min(10, #tiles) do
+				local t = tiles[i]
+				print(string.format("[GrowBlox]   tile %d: x=%d y=%d fg=%s", i, t.x, t.y, tostring(t.fg)))
+			end
+		else
+			print("[GrowBlox] playerTile: TIDAK ADA")
+		end
+	end)
+	if not ok then
+		print("[GrowBlox] debug error: " .. tostring(err))
 	end
 end)
 
