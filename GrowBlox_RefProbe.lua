@@ -102,18 +102,23 @@ if getgc then
 end
 
 -- ---------------------------------------------------------------------------
--- Cetak hasil
+-- Cetak hasil + simpan ke file + tampilkan di GUI agar mudah dicopy
 -- ---------------------------------------------------------------------------
-print("[RefProbe] WORLD candidates: " .. tostring(#candidates.world))
+local report = {}
+local function add(line)
+	report[#report + 1] = line
+	print("[RefProbe] " .. line)
+end
+
+add("WORLD candidates: " .. tostring(#candidates.world))
 for i, w in ipairs(candidates.world) do
-	print(string.format("[RefProbe] WORLD%d: fg=%s bg=%s w=%s h=%s spawn=%s",
+	add(string.format("WORLD%d: fg=%s bg=%s w=%s h=%s spawn=%s",
 		i,
 		type(rawget(w, "fg")),
 		type(rawget(w, "bg")),
 		tostring(rawget(w, "w")),
 		tostring(rawget(w, "h")),
 		describe(rawget(w, "spawn"))))
-	-- sample fg
 	pcall(function()
 		local fg = w.fg
 		if fg then
@@ -121,17 +126,17 @@ for i, w in ipairs(candidates.world) do
 			if row then
 				local s = {}
 				for x = 1, math.min(8, #row) do s[#s + 1] = tostring(row[x]) end
-				print("[RefProbe] WORLD" .. i .. ".fg[1] = " .. table.concat(s, ","))
+				add("WORLD" .. i .. ".fg[1] = " .. table.concat(s, ","))
 			else
-				print("[RefProbe] WORLD" .. i .. ".fg[1] = (bukan array per baris)")
+				add("WORLD" .. i .. ".fg[1] = (bukan array per baris)")
 			end
 		end
 	end)
 end
 
-print("[RefProbe] INV candidates: " .. tostring(#candidates.inv))
+add("INV candidates: " .. tostring(#candidates.inv))
 for i, inv in ipairs(candidates.inv) do
-	print(string.format("[RefProbe] INV%d: slots=%s remove=%s count=%s capacity=%s",
+	add(string.format("INV%d: slots=%s remove=%s count=%s capacity=%s",
 		i,
 		tostring(#(inv.slots or {})),
 		type(rawget(inv, "remove")),
@@ -139,14 +144,123 @@ for i, inv in ipairs(candidates.inv) do
 		tostring(rawget(inv, "capacity"))))
 	pcall(function()
 		for j = 1, math.min(3, #(inv.slots or {})) do
-			print("[RefProbe] INV" .. i .. ".slot" .. j .. " = " .. describe(inv.slots[j]))
+			add("INV" .. i .. ".slot" .. j .. " = " .. describe(inv.slots[j]))
 		end
 	end)
 end
 
-print("[RefProbe] STATE candidates: " .. tostring(#candidates.state))
+add("STATE candidates: " .. tostring(#candidates.state))
 for i, c in ipairs(candidates.state) do
-	print("[RefProbe] STATE" .. i .. " = " .. describe(c.state, 1))
+	add("STATE" .. i .. " = " .. describe(c.state, 1))
 end
 
-print("[RefProbe] Selesai. Kirim hasil ini ke saya.")
+add("Selesai.")
+
+-- Simpan ke file executor (writefile) supaya bisa diambil.
+pcall(function()
+	if writefile then
+		writefile("GrowBlox_RefProbe.txt", table.concat(report, "\n"))
+	end
+end)
+
+-- GUI dengan tombol COPY
+local fullReport = table.concat(report, "\n")
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GrowBloxRefProbe"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function()
+	local parent
+	if type(gethui) == "function" then parent = gethui() end
+	if not parent then parent = player:FindFirstChild("PlayerGui") end
+	if not parent then parent = game:GetService("CoreGui") end
+	screenGui.Parent = parent
+end)
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 320, 0, 200)
+frame.Position = UDim2.new(0.5, -160, 1, -204)
+frame.AnchorPoint = Vector2.new(0.5, 1)
+frame.BackgroundColor3 = Color3.fromRGB(15, 18, 32)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -70, 0, 24)
+title.Position = UDim2.new(0, 10, 0, 4)
+title.BackgroundTransparency = 1
+title.Text = "RefProbe"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 12
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = frame
+
+local copyBtn = Instance.new("TextButton")
+copyBtn.Size = UDim2.new(0, 60, 0, 20)
+copyBtn.Position = UDim2.new(1, -68, 0, 4)
+copyBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+copyBtn.BorderSizePixel = 0
+copyBtn.Text = "COPY"
+copyBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+copyBtn.Font = Enum.Font.GothamBold
+copyBtn.TextSize = 10
+copyBtn.Parent = frame
+
+local copyCorner = Instance.new("UICorner")
+copyCorner.CornerRadius = UDim.new(0, 4)
+copyCorner.Parent = copyBtn
+
+copyBtn.MouseButton1Click:Connect(function()
+	pcall(function()
+		if setclipboard then
+			setclipboard(fullReport)
+			copyBtn.Text = "OK"
+			task.wait(1)
+			copyBtn.Text = "COPY"
+		end
+	end)
+end)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -20, 1, -34)
+scroll.Position = UDim2.new(0, 10, 0, 28)
+scroll.BackgroundColor3 = Color3.fromRGB(22, 27, 48)
+scroll.BorderSizePixel = 0
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.ScrollBarThickness = 5
+scroll.Parent = frame
+
+local scrollCorner = Instance.new("UICorner")
+scrollCorner.CornerRadius = UDim.new(0, 5)
+scrollCorner.Parent = scroll
+
+local text = Instance.new("TextLabel")
+text.Size = UDim2.new(1, -12, 0, 0)
+text.Position = UDim2.new(0, 6, 0, 6)
+text.BackgroundTransparency = 1
+text.Text = fullReport
+text.TextColor3 = Color3.fromRGB(220, 235, 255)
+text.Font = Enum.Font.Code
+text.TextSize = 10
+text.TextWrapped = true
+text.TextXAlignment = Enum.TextXAlignment.Left
+text.TextYAlignment = Enum.TextYAlignment.Top
+text.RichText = true
+text.Parent = scroll
+
+task.spawn(function()
+	task.wait(0.3)
+	pcall(function()
+		local h = text.TextBounds.Y + 16
+		text.Size = UDim2.new(1, -12, 0, h)
+		scroll.CanvasSize = UDim2.new(0, 0, 0, h)
+	end)
+end)
