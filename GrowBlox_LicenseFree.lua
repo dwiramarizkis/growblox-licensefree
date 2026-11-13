@@ -1,22 +1,20 @@
--- GrowBlox main source: license-free build (REFERENCE RECONSTRUCTION)
---
--- IMPORTANT: The HipHub endpoint did NOT return the original GrowBlox main
--- script for the provided key; it returned an HWID-limit error UI payload.
--- Therefore this file is a functional reconstruction of the GrowBlox feature
--- set, intended to be replaced by the owner's real main source when it is
--- obtained. All license, key, HWID, account binding, and license-server
--- dependencies have been removed.
--- The application core is preserved.
+-- GrowBlox license-free build
+-- Fitur:
+--   1. Auto Farm      : panen sugar cane otomatis + tanam seed otomatis
+--   2. Auto Put/Break : hancurkan block + tempatkan block otomatis
+--   3. Scanner        : daftar objek interaktif di sekitar
+--   4. GUI            : WindUI bila tersedia, fallback GUI bawaan bila tidak
+-- Tanpa key, HWID, account binding, atau server lisensi.
 
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
 
-local player = game:GetService("Players").LocalPlayer
-local mouse = player:GetMouse()
+local player = Players.LocalPlayer
 
-local isKeyboardPresent = pcall(function()
-	return UIS.KeyboardEnabled
-end)
+repeat task.wait() until game:IsLoaded()
 
 -- ===========================================================================
 -- 1. Anti-duplicate guard
@@ -29,938 +27,672 @@ _G.HipHub_GrowBlox_Running = true
 -- ===========================================================================
 -- 2. Configuration
 -- ===========================================================================
-local MODE_CONFIG = {
-	shootParts = true,
-	shootKillBrick = false,
-	shootNuke = false,
-	shootMagnet = false,
-	shootForceField = false,
-	shootFlinger = false,
-	shootSpin = false,
-	shootTrap = false,
-	shootSpawn = false,
-	shootVehicle = false,
-	shootHouse = false,
-	shootSmoke = false,
-	shootNormal = false,
-	shootGhost = false,
-	shootResize = false,
-	shootTroll = false,
-	shootTeleport = false,
-	shootBlackHole = false,
-	shootHeavy = false,
-	shootLaunch = false,
-	shootBounce = false,
-	shootExplode = false,
-	shootDrop = false,
-	shootBomb = false,
-	shootCrash = false,
-	shootTime = false,
-	shootFire = false,
-	shootFreeze = false,
-	shootTornado = false,
-	shootLightning = false,
-	shootFlood = false,
-	shootGravity = false,
-	shootSlide = false,
-	shootInvisible = false,
-	shootUnanchored = false,
-	shootBigHead = false,
-	shootButterFly = false,
-	shootPlant = false,
-	shootWater = false,
-	shootMeteor = false,
-	shootStun = false,
-	shootSound = false,
+local CONFIG = {
+	autoHarvest = true,
+	autoPlant = false,
+	autoBreak = false,
+	autoPlace = false,
+
+	range = 40,
+	interactDistance = 16,
+	arriveTimeout = 12,
+	hitCount = 2,
+	hitInterval = 0.4,
+	pickupWait = 1.2,
+	walkSpeed = 16,
+
+	breakHits = 1,
+	breakInterval = 0.4,
+	placeWait = 0.4,
+
+	-- Bila tidak ada target dengan nama cocok, jangan klik sembarangan.
+	-- Aktifkan hanya jika kamu sudah yakin game memakai satu jenis ClickDetector.
+	fallbackToAnyClick = false,
+
+	-- Lower-case substrings matched against object names.
+	sugarCaneNames = {
+		"sugar cane",
+		"sugarcane",
+		"sugar_cane",
+		"sugar",
+		"cane",
+		"tebu",
+		"plant",
+		"crop",
+		"harvest",
+	},
+	plantSpotNames = {
+		"plot",
+		"soil",
+		"dirt",
+		"farm",
+		"farmland",
+		"field",
+		"garden",
+		"seedbed",
+		"planter",
+		"bed",
+	},
+	breakBlockNames = {
+		"block",
+		"brick",
+		"stone",
+		"rock",
+		"ore",
+		"wood",
+		"log",
+		"plank",
+		"crate",
+		"box",
+		"hay",
+		"grass",
+		"flower",
+		"tree",
+	},
+	placeSpotNames = {
+		"slot",
+		"pad",
+		"base",
+		"floor",
+		"ground",
+		"foundation",
+		"grid",
+		"cell",
+		"placeholder",
+		"build",
+	},
 }
 
 -- ===========================================================================
--- 3. Performance registry
+-- 3. Character helpers
 -- ===========================================================================
-local PerformanceRegistry = {
-	activeParts = 0,
-	maxParts = 400,
-	partLifetime = 20,
-}
-
--- ===========================================================================
--- 4. Environment helpers
--- ===========================================================================
-local function isTouchDevice()
-	return UIS.TouchEnabled
+if not player.Character then
+	player.CharacterAdded:Wait()
 end
 
-local function isMobileDevice()
-	return isTouchDevice() and not isKeyboardPresent
+local function getCharacter()
+	return player.Character
 end
 
--- ===========================================================================
--- 5. Safe destruction helper
--- ===========================================================================
+local function getRootPart()
+	local character = getCharacter()
+	if not character then
+		return nil
+	end
+	return character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHumanoid()
+	local character = getCharacter()
+	if not character then
+		return nil
+	end
+	return character:FindFirstChildOfClass("Humanoid")
+end
+
+local function setWalkSpeed(speed)
+	local humanoid = getHumanoid()
+	if humanoid then
+		pcall(function()
+			humanoid.WalkSpeed = speed
+		end)
+	end
+end
+
+local function walkTo(position)
+	local humanoid = getHumanoid()
+	if not humanoid then
+		return false
+	end
+	local ok = pcall(function()
+		humanoid:MoveTo(position)
+	end)
+	return ok
+end
+
+local function distanceTo(part)
+	local root = getRootPart()
+	if not root or not part then
+		return math.huge
+	end
+	local ok, distance = pcall(function()
+		return (part.Position - root.Position).Magnitude
+	end)
+	if ok then
+		return distance
+	end
+	return math.huge
+end
+
+local function waitUntilNear(part, maxDistance)
+	local waited = 0
+	while waited < CONFIG.arriveTimeout do
+		if distanceTo(part) <= maxDistance then
+			return true
+		end
+		task.wait(0.25)
+		waited += 0.25
+	end
+	return distanceTo(part) <= maxDistance
+end
+
+local function nameMatches(name, keywords)
+	name = tostring(name):lower()
+	for _, keyword in ipairs(keywords) do
+		if name:find(keyword, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
 local function safeDestroy(instance)
 	if instance and instance.Destroy then
 		pcall(instance.Destroy, instance)
 	end
 end
 
--- ===========================================================================
--- 6. Tween helper
--- ===========================================================================
-local function createTween(object, info, properties)
-	return TweenService:Create(object, info, properties)
-end
-
--- ===========================================================================
--- 7. Part shooting engine
--- ===========================================================================
-local ShootPart = {}
-ShootPart.__index = ShootPart
-
-function ShootPart.new(targetPart)
-	local self = setmetatable({}, ShootPart)
-	self.part = targetPart
-	return self
-end
-
-function ShootPart:launch(velocity, rotationVelocity)
-	local bodyVelocity = Instance.new("BodyVelocity")
-	bodyVelocity.MaxForce = Vector3.new(1, 1, 1) * 100000
-	bodyVelocity.Velocity = velocity or Vector3.new(0, 0, -80)
-	bodyVelocity.Parent = self.part
-
-	local bodyAngularVelocity = Instance.new("BodyAngularVelocity")
-	bodyAngularVelocity.MaxTorque = Vector3.new(1, 1, 1) * 100000
-	bodyAngularVelocity.AngularVelocity = rotationVelocity or Vector3.new(
-		math.random(-15, 15),
-		math.random(-15, 15),
-		math.random(-15, 15)
-	)
-	bodyAngularVelocity.Parent = self.part
-
-	self.part.CanCollide = true
-	self.part.Anchored = false
-	self.part.Parent = workspace
-
-	task.spawn(function()
-		task.wait(PerformanceRegistry.partLifetime)
-		safeDestroy(self.part)
-	end)
-end
-
-function ShootPart:destroy()
-	safeDestroy(self.part)
-end
-
--- ===========================================================================
--- 8. Pre-made part catalogue (GrowBlox "grow and shoot" behaviour)
--- ===========================================================================
-local function createBasicPart(size)
-	local part = Instance.new("Part")
-	part.Size = size or Vector3.new(4, 2, 4)
-	part.Shape = Enum.PartType.Block
-	part.TopSurface = Enum.SurfaceType.Smooth
-	part.BottomSurface = Enum.SurfaceType.Smooth
-	part.Material = Enum.Material.SmoothPlastic
-	return part
-end
-
-local function createBombPart()
-	local part = createBasicPart(Vector3.new(6, 2, 6))
-	part.BrickColor = BrickColor.new("Really red")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createNormalPart()
-	local part = createBasicPart(Vector3.new(4, 2, 4))
-	part.BrickColor = BrickColor.Random()
-	return part
-end
-
-local function createMagnetPart()
-	local part = createBasicPart(Vector3.new(5, 1, 5))
-	part.BrickColor = BrickColor.new("Cyan")
-	part.Material = Enum.Material.Metal
-	return part
-end
-
-local function createForceFieldPart()
-	local part = createBasicPart(Vector3.new(8, 1, 8))
-	part.BrickColor = BrickColor.new("Bright blue")
-	part.Material = Enum.Material.ForceField
-	return part
-end
-
-local function createFlingerPart()
-	local part = createBasicPart(Vector3.new(10, 1, 10))
-	part.BrickColor = BrickColor.new("Bright green")
-	part.Material = Enum.Material.Grass
-	return part
-end
-
-local function createSpinPart()
-	local part = createBasicPart(Vector3.new(6, 1, 6))
-	part.BrickColor = BrickColor.new("Bright orange")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createTrapPart()
-	local part = createBasicPart(Vector3.new(5, 1, 5))
-	part.BrickColor = BrickColor.new("Dark stone grey")
-	part.Material = Enum.Material.Slate
-	return part
-end
-
-local function createSpawnPart()
-	local part = createBasicPart(Vector3.new(6, 2, 6))
-	part.BrickColor = BrickColor.new("Bright violet")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createVehiclePart()
-	local part = createBasicPart(Vector3.new(5, 2, 5))
-	part.BrickColor = BrickColor.new("Bright yellow")
-	part.Material = Enum.Material.Metal
-	return part
-end
-
-local function createHousePart()
-	local part = createBasicPart(Vector3.new(12, 6, 12))
-	part.BrickColor = BrickColor.new("Medium brown")
-	part.Material = Enum.Material.WoodPlanks
-	return part
-end
-
-local function createSmokePart()
-	local part = createBasicPart(Vector3.new(6, 2, 6))
-	part.BrickColor = BrickColor.new("Smoky grey")
-	part.Material = Enum.Material.Slate
-	return part
-end
-
-local function createGhostPart()
-	local part = createBasicPart(Vector3.new(5, 3, 5))
-	part.BrickColor = BrickColor.new("White")
-	part.Material = Enum.Material.Glass
-	part.Transparency = 0.55
-	return part
-end
-
-local function createResizePart()
-	local part = createBasicPart(Vector3.new(8, 2, 8))
-	part.BrickColor = BrickColor.new("Bright purple")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createTrollPart()
-	local part = createBasicPart(Vector3.new(7, 2, 7))
-	part.BrickColor = BrickColor.new("Bright red")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createTeleportPart()
-	local part = createBasicPart(Vector3.new(4, 1, 4))
-	part.BrickColor = BrickColor.new("Bright blue")
-	part.Material = Enum.Material.Glass
-	return part
-end
-
-local function createBlackHolePart()
-	local part = createBasicPart(Vector3.new(9, 2, 9))
-	part.BrickColor = BrickColor.new("Black")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createHeavyPart()
-	local part = createBasicPart(Vector3.new(5, 2, 5))
-	part.BrickColor = BrickColor.new("Dark grey")
-	part.Material = Enum.Material.CorrodedMetal
-	return part
-end
-
-local function createLaunchPart()
-	local part = createBasicPart(Vector3.new(6, 1, 6))
-	part.BrickColor = BrickColor.new("Bright yellow")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createBouncePart()
-	local part = createBasicPart(Vector3.new(5, 1, 5))
-	part.BrickColor = BrickColor.new("Bright green")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createExplodePart()
-	local part = createBasicPart(Vector3.new(7, 2, 7))
-	part.BrickColor = BrickColor.new("Really red")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createDropPart()
-	local part = createBasicPart(Vector3.new(5, 2, 5))
-	part.BrickColor = BrickColor.new("Medium stone grey")
-	part.Material = Enum.Material.Slate
-	return part
-end
-
-local function createBombDropPart()
-	local part = createBasicPart(Vector3.new(6, 3, 6))
-	part.BrickColor = BrickColor.new("Really black")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createCrashPart()
-	local part = createBasicPart(Vector3.new(4, 2, 4))
-	part.BrickColor = BrickColor.new("Bright red")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createTimePart()
-	local part = createBasicPart(Vector3.new(4, 1, 4))
-	part.BrickColor = BrickColor.new("Bright blue")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createFirePart()
-	local part = createBasicPart(Vector3.new(5, 2, 5))
-	part.BrickColor = BrickColor.new("Bright orange")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createFreezePart()
-	local part = createBasicPart(Vector3.new(5, 2, 5))
-	part.BrickColor = BrickColor.new("Bright blue")
-	part.Material = Enum.Material.Glacier
-	return part
-end
-
-local function createTornadoPart()
-	local part = createBasicPart(Vector3.new(6, 6, 6))
-	part.BrickColor = BrickColor.new("Pastel blue")
-	part.Material = Enum.Material.Glass
-	return part
-end
-
-local function createLightningPart()
-	local part = createBasicPart(Vector3.new(5, 2, 5))
-	part.BrickColor = BrickColor.new("Bright yellow")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createFloodPart()
-	local part = createBasicPart(Vector3.new(6, 2, 6))
-	part.BrickColor = BrickColor.new("Bright blue")
-	part.Material = Enum.Material.Water
-	return part
-end
-
-local function createGravityPart()
-	local part = createBasicPart(Vector3.new(7, 2, 7))
-	part.BrickColor = BrickColor.new("Bright violet")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createSlidePart()
-	local part = createBasicPart(Vector3.new(5, 1, 5))
-	part.BrickColor = BrickColor.new("Bright blue")
-	part.Material = Enum.Material.Ice
-	return part
-end
-
-local function createInvisiblePart()
-	local part = createBasicPart(Vector3.new(4, 1, 4))
-	part.BrickColor = BrickColor.new("White")
-	part.Material = Enum.Material.Glass
-	part.Transparency = 1
-	return part
-end
-
-local function createUnanchoredPart()
-	local part = createBasicPart(Vector3.new(4, 2, 4))
-	part.BrickColor = BrickColor.Random()
-	return part
-end
-
-local function createBigHeadPart()
-	local part = createBasicPart(Vector3.new(5, 2, 5))
-	part.BrickColor = BrickColor.new("Bright pink")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createButterFlyPart()
-	local part = createBasicPart(Vector3.new(4, 1, 4))
-	part.BrickColor = BrickColor.new("Pastel yellow")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createPlantPart()
-	local part = createBasicPart(Vector3.new(4, 4, 4))
-	part.BrickColor = BrickColor.new("Bright green")
-	part.Material = Enum.Material.Grass
-	return part
-end
-
-local function createWaterPart()
-	local part = createBasicPart(Vector3.new(6, 2, 6))
-	part.BrickColor = BrickColor.new("Bright blue")
-	part.Material = Enum.Material.Water
-	return part
-end
-
-local function createMeteorPart()
-	local part = createBasicPart(Vector3.new(8, 2, 8))
-	part.BrickColor = BrickColor.new("Dark orange")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createStunPart()
-	local part = createBasicPart(Vector3.new(4, 2, 4))
-	part.BrickColor = BrickColor.new("Bright yellow")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
-local function createSoundPart()
-	local part = createBasicPart(Vector3.new(4, 2, 4))
-	part.BrickColor = BrickColor.new("Bright blue")
-	part.Material = Enum.Material.Neon
-	return part
-end
-
--- ===========================================================================
--- 9. Mode factory registry
--- ===========================================================================
-local PART_FACTORY = {
-	shootParts = createNormalPart,
-	shootKillBrick = createBasicPart,
-	shootNuke = createExplodePart,
-	shootMagnet = createMagnetPart,
-	shootForceField = createForceFieldPart,
-	shootFlinger = createFlingerPart,
-	shootSpin = createSpinPart,
-	shootTrap = createTrapPart,
-	shootSpawn = createSpawnPart,
-	shootVehicle = createVehiclePart,
-	shootHouse = createHousePart,
-	shootSmoke = createSmokePart,
-	shootNormal = createNormalPart,
-	shootGhost = createGhostPart,
-	shootResize = createResizePart,
-	shootTroll = createTrollPart,
-	shootTeleport = createTeleportPart,
-	shootBlackHole = createBlackHolePart,
-	shootHeavy = createHeavyPart,
-	shootLaunch = createLaunchPart,
-	shootBounce = createBouncePart,
-	shootExplode = createExplodePart,
-	shootDrop = createDropPart,
-	shootBomb = createBombDropPart,
-	shootCrash = createCrashPart,
-	shootTime = createTimePart,
-	shootFire = createFirePart,
-	shootFreeze = createFreezePart,
-	shootTornado = createTornadoPart,
-	shootLightning = createLightningPart,
-	shootFlood = createFloodPart,
-	shootGravity = createGravityPart,
-	shootSlide = createSlidePart,
-	shootInvisible = createInvisiblePart,
-	shootUnanchored = createUnanchoredPart,
-	shootBigHead = createBigHeadPart,
-	shootButterFly = createButterFlyPart,
-	shootPlant = createPlantPart,
-	shootWater = createWaterPart,
-	shootMeteor = createMeteorPart,
-	shootStun = createStunPart,
-	shootSound = createSoundPart,
-}
-
--- ===========================================================================
--- 10. Mode effects
--- ===========================================================================
-local MODE_EFFECTS = {
-	shootParts = function(part)
-		-- Grow: scale up before launch
-		createTween(part, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Size = part.Size + Vector3.new(2, 1, 2),
-		}):Play()
-	end,
-	shootNuke = function(part)
-		task.spawn(function()
-			task.wait(0.8)
-			local explosion = Instance.new("Explosion")
-			explosion.Position = part.Position
-			explosion.BlastRadius = 25
-			explosion.BlastPressure = 500000
-			explosion.DestroyJointRadiusPercent = 0
-			explosion.Parent = workspace
-			safeDestroy(part)
-		end)
-	end,
-	shootMagnet = function(part)
-		task.spawn(function()
-			for _ = 1, 8 do
-				task.wait(0.05)
-				if not part or not part.Parent then break end
-				for _, other in ipairs(workspace:GetDescendants()) do
-					if other:IsA("Part") and other ~= part and other.Anchored == false then
-						local root = other:FindFirstChild("BodyVelocity")
-						if not root then
-							local pull = Instance.new("BodyVelocity")
-							pull.MaxForce = Vector3.new(1, 1, 1) * 90000
-							pull.Velocity = (part.Position - other.Position).Unit * 60
-							pull.Parent = other
-							task.delay(0.3, function()
-								safeDestroy(pull)
-							end)
-						end
-					end
-				end
-			end
-		end)
-	end,
-	shootForceField = function(part)
-		local forceField = Instance.new("ForceField")
-		forceField.Visible = true
-		forceField.Parent = part
-	end,
-	shootFlinger = function(part)
-		task.spawn(function()
-			task.wait(0.05)
-			for _, other in ipairs(workspace:GetDescendants()) do
-				if other:IsA("Part") and other ~= part and other.Anchored == false then
-					local fling = Instance.new("BodyVelocity")
-					fling.MaxForce = Vector3.new(1, 1, 1) * 100000
-					fling.Velocity = Vector3.new(math.random(-60, 60), 120, math.random(-60, 60))
-					fling.Parent = other
-					task.delay(0.8, function()
-						safeDestroy(fling)
-					end)
-				end
-			end
-		end)
-	end,
-	shootSpin = function(part)
-		local spin = Instance.new("BodyAngularVelocity")
-		spin.MaxTorque = Vector3.new(1, 1, 1) * 100000
-		spin.AngularVelocity = Vector3.new(0, 45, 0)
-		spin.Parent = part
-	end,
-	shootTrap = function(part)
-		part.Anchored = true
-		part.CanCollide = true
-	end,
-	shootSpawn = function(part)
-		task.spawn(function()
-			for i = 1, 5 do
-				task.wait(0.4)
-				local copy = part:Clone()
-				copy.Parent = workspace
-				copy.Anchored = false
-				pcall(function()
-					copy:MakeJoints()
-				end)
-			end
-		end)
-	end,
-	shootVehicle = function(part)
-		local seat = Instance.new("VehicleSeat")
-		seat.Parent = part
-		seat.MaxSpeed = 80
-		seat.Torque = 40
-		seat.TurnSpeed = 30
-	end,
-	shootHouse = function(part)
-		part.Anchored = true
-		local wall = Instance.new("Part")
-		wall.Size = Vector3.new(4, 6, 1)
-		wall.Position = part.Position + Vector3.new(0, 3, 6)
-		wall.Anchored = true
-		wall.Parent = workspace
-	end,
-	shootSmoke = function(part)
-		local smoke = Instance.new("Smoke")
-		smoke.Parent = part
-		smoke.Size = 6
-		smoke.RiseVelocity = 4
-		smoke.Opacity = 0.5
-	end,
-	shootGhost = function(part)
-		part.CanCollide = false
-		part.Transparency = 0.6
-	end,
-	shootResize = function(part)
-		createTween(part, TweenInfo.new(0.4, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out), {
-			Size = part.Size * 2,
-		}):Play()
-	end,
-	shootTroll = function(part)
-		part.Name = "GrowBlox Troll"
-		part.BrickColor = BrickColor.new("Really red")
-	end,
-	shootTeleport = function(part)
-		local character = player.Character
-		if character then
-			character:PivotTo(CFrame.new(part.Position + Vector3.new(0, 6, 0)))
-		end
-	end,
-	shootBlackHole = function(part)
-		task.spawn(function()
-			for _ = 1, 15 do
-				task.wait(0.1)
-				for _, other in ipairs(workspace:GetDescendants()) do
-					if other:IsA("Part") and other ~= part and other.Anchored == false then
-						local pull = Instance.new("BodyVelocity")
-						pull.MaxForce = Vector3.new(1, 1, 1) * 150000
-						pull.Velocity = (part.Position - other.Position).Unit * 90
-						pull.Parent = other
-						task.delay(0.2, function()
-							safeDestroy(pull)
-						end)
-					end
-				end
-			end
-		end)
-	end,
-	shootHeavy = function(part)
-		part.Material = Enum.Material.CorrodedMetal
-		part.Size = part.Size + Vector3.new(1, 1, 1)
-	end,
-	shootLaunch = function(part)
-		task.spawn(function()
-			task.wait(0.05)
-			for _, other in ipairs(workspace:GetDescendants()) do
-				if other:IsA("Part") and other ~= part and other.Anchored == false then
-					local launch = Instance.new("BodyVelocity")
-					launch.MaxForce = Vector3.new(1, 1, 1) * 100000
-					launch.Velocity = Vector3.new(0, 150, 0)
-					launch.Parent = other
-					task.delay(0.5, function()
-						safeDestroy(launch)
-					end)
-				end
-			end
-		end)
-	end,
-	shootBounce = function(part)
-		part.Elasticity = 0.95
-		part.CustomPhysicalProperties = PhysicalProperties.new(0.2, 0.6, 0.95, 0.95, 1)
-	end,
-	shootExplode = function(part)
-		task.spawn(function()
-			task.wait(0.1)
-			local explosion = Instance.new("Explosion")
-			explosion.Position = part.Position
-			explosion.BlastRadius = 12
-			explosion.BlastPressure = 300000
-			explosion.Parent = workspace
-			safeDestroy(part)
-		end)
-	end,
-	shootDrop = function(part)
-		part.Anchored = false
-	end,
-	shootBomb = function(part)
-		task.spawn(function()
-			task.wait(0.5)
-			local explosion = Instance.new("Explosion")
-			explosion.Position = part.Position
-			explosion.BlastRadius = 30
-			explosion.BlastPressure = 800000
-			explosion.Parent = workspace
-			safeDestroy(part)
-		end)
-	end,
-	shootCrash = function(part)
-		task.spawn(function()
-			task.wait(1)
-			for _, other in ipairs(workspace:GetDescendants()) do
-				if other:IsA("Part") and other ~= part and other.Anchored == false then
-					local crash = Instance.new("BodyVelocity")
-					crash.MaxForce = Vector3.new(1, 1, 1) * 100000
-					crash.Velocity = Vector3.new(math.random(-80, 80), math.random(20, 90), math.random(-80, 80))
-					crash.Parent = other
-					task.delay(0.6, function()
-						safeDestroy(crash)
-					end)
-				end
-			end
-			safeDestroy(part)
-		end)
-	end,
-	shootTime = function(part)
-		part.Anchored = true
-		part.BrickColor = BrickColor.new("Bright blue")
-	end,
-	shootFire = function(part)
-		local fire = Instance.new("Fire")
-		fire.Parent = part
-		fire.Size = 8
-		fire.Heat = 25
-	end,
-	shootFreeze = function(part)
-		part.Anchored = true
-		part.Material = Enum.Material.Glacier
-	end,
-	shootTornado = function(part)
-		local spin = Instance.new("BodyAngularVelocity")
-		spin.MaxTorque = Vector3.new(1, 1, 1) * 200000
-		spin.AngularVelocity = Vector3.new(0, 90, 0)
-		spin.Parent = part
-		part.CanCollide = false
-	end,
-	shootLightning = function(part)
-		local sparkles = Instance.new("Sparkles")
-		sparkles.Parent = part
-		sparkles.SparkleColor = Color3.fromRGB(255, 240, 120)
-	end,
-	shootFlood = function(part)
-		local water = Instance.new("Part")
-		water.Size = Vector3.new(20, 1, 20)
-		water.Position = part.Position - Vector3.new(0, 2, 0)
-		water.Anchored = true
-		water.Material = Enum.Material.Water
-		water.Transparency = 0.3
-		water.Parent = workspace
-	end,
-	shootGravity = function(part)
-		local gravity = Instance.new("BodyForce")
-		gravity.Force = Vector3.new(0, -2000, 0)
-		gravity.Parent = part
-	end,
-	shootSlide = function(part)
-		part.Material = Enum.Material.Ice
-		part.Friction = 0.02
-	end,
-	shootInvisible = function(part)
-		part.Transparency = 1
-		part.CanCollide = false
-	end,
-	shootUnanchored = function(part)
-		part.Anchored = false
-		part.CanCollide = true
-	end,
-	shootBigHead = function(part)
-		local targetCharacter = player.Character
-		if targetCharacter and targetCharacter:FindFirstChild("Head") then
-			local head = targetCharacter:FindFirstChild("Head")
-			createTween(head, TweenInfo.new(0.5, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out), {
-				Size = head.Size + Vector3.new(3, 3, 3),
-			}):Play()
-		end
-	end,
-	shootButterFly = function(part)
-		task.spawn(function()
-			for _ = 1, 6 do
-				task.wait(0.1)
-				part.Position = part.Position + Vector3.new(math.random(-3, 3), 4, math.random(-3, 3))
-			end
-		end)
-	end,
-	shootPlant = function(part)
-		local plant = Instance.new("Part")
-		plant.Size = Vector3.new(1, 6, 1)
-		plant.Position = part.Position + Vector3.new(0, 3, 0)
-		plant.Anchored = true
-		plant.BrickColor = BrickColor.new("Bright green")
-		plant.Parent = workspace
-	end,
-	shootWater = function(part)
-		part.Material = Enum.Material.Water
-		part.Transparency = 0.25
-	end,
-	shootMeteor = function(part)
-		task.spawn(function()
-			for _ = 1, 5 do
-				task.wait(0.3)
-				local meteor = Instance.new("Part")
-				meteor.Size = Vector3.new(6, 2, 6)
-				meteor.Position = part.Position + Vector3.new(math.random(-20, 20), 40, math.random(-20, 20))
-				meteor.Anchored = false
-				meteor.BrickColor = BrickColor.new("Dark orange")
-				meteor.Material = Enum.Material.Neon
-				meteor.Parent = workspace
-				local bodyVelocity = Instance.new("BodyVelocity")
-				bodyVelocity.MaxForce = Vector3.new(1, 1, 1) * 100000
-				bodyVelocity.Velocity = Vector3.new(0, -120, 0)
-				bodyVelocity.Parent = meteor
-				task.delay(1, function()
-					safeDestroy(meteor)
-				end)
-			end
-		end)
-	end,
-	shootStun = function(part)
-		local targetCharacter = player.Character
-		if targetCharacter and targetCharacter:FindFirstChild("Humanoid") then
-			local humanoid = targetCharacter:FindFirstChild("Humanoid")
-			humanoid.WalkSpeed = 0
-			task.delay(2, function()
-				if humanoid and humanoid.Parent then
-					humanoid.WalkSpeed = 16
-				end
-			end)
-		end
-	end,
-	shootSound = function(part)
-		local sound = Instance.new("Sound")
-		sound.SoundId = "rbxassetid://9125406956"
-		sound.Volume = 1
-		sound.Parent = part
-		sound:Play()
-	end,
-}
-
--- ===========================================================================
--- 11. Main shoot handler
--- ===========================================================================
-local function getActiveModes()
-	local active = {}
-	for modeName, enabled in pairs(MODE_CONFIG) do
-		if enabled and PART_FACTORY[modeName] then
-			table.insert(active, modeName)
-		end
-	end
-	return active
-end
-
-local function firePrimary()
-	local activeModes = getActiveModes()
-	if #activeModes == 0 then
-		return
-	end
-
-	local character = player.Character
-	if not character then
-		return
-	end
-	local rootPart = character:FindFirstChild("HumanoidRootPart")
-	if not rootPart then
-		return
-	end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		return
-	end
-
-	-- Safe usage of the mouse Hit value
-	local targetPosition = rootPart.Position + rootPart.CFrame.LookVector * 25
+local function notify(title, text, duration)
 	pcall(function()
-		if mouse and mouse.Hit then
-			targetPosition = mouse.Hit.Position
-		end
-	end)
-
-	local direction = (targetPosition - rootPart.Position).Unit
-
-	local basePart = createBasicPart(Vector3.new(4, 2, 4))
-	basePart.Position = rootPart.Position + direction * 5
-	basePart.CFrame = CFrame.lookAt(basePart.Position, targetPosition)
-	basePart.Parent = workspace
-
-	PerformanceRegistry.activeParts += 1
-	if PerformanceRegistry.activeParts > PerformanceRegistry.maxParts then
-		-- Light cleanup: destroy the oldest shot part to keep the registry bounded
-		local oldestPart = workspace:FindFirstChild(basePart.Name)
-		if oldestPart then
-			safeDestroy(oldestPart)
-		end
-		PerformanceRegistry.activeParts -= 1
-	end
-
-	local shotPart = ShootPart.new(basePart)
-	shotPart:launch(direction * 90, Vector3.new(math.random(-10, 10), math.random(-10, 10), math.random(-10, 10)))
-
-	for _, modeName in ipairs(activeModes) do
-		local effect = MODE_EFFECTS[modeName]
-		if effect then
-			pcall(effect, basePart)
-		end
-	end
-
-	task.spawn(function()
-		task.wait(PerformanceRegistry.partLifetime)
-		PerformanceRegistry.activeParts = math.max(0, PerformanceRegistry.activeParts - 1)
-		safeDestroy(basePart)
+		StarterGui:SetCore("SendNotification", {
+			Title = tostring(title or "GrowBlox"),
+			Text = tostring(text or ""),
+			Duration = duration or 2,
+		})
 	end)
 end
 
 -- ===========================================================================
--- 12. WindUI interface
+-- 4. Executor function resolution
 -- ===========================================================================
-local MODE_OPTIONS = {
-	{ id = "shootParts", label = "Parts" },
-	{ id = "shootNuke", label = "Nuke" },
-	{ id = "shootMagnet", label = "Magnet" },
-	{ id = "shootForceField", label = "ForceField" },
-	{ id = "shootFlinger", label = "Flinger" },
-	{ id = "shootSpin", label = "Spin" },
-	{ id = "shootTrap", label = "Trap" },
-	{ id = "shootSpawn", label = "Spawn" },
-	{ id = "shootVehicle", label = "Vehicle" },
-	{ id = "shootHouse", label = "House" },
-	{ id = "shootSmoke", label = "Smoke" },
-	{ id = "shootNormal", label = "Normal" },
-	{ id = "shootGhost", label = "Ghost" },
-	{ id = "shootResize", label = "Resize" },
-	{ id = "shootTroll", label = "Troll" },
-	{ id = "shootTeleport", label = "Teleport" },
-	{ id = "shootBlackHole", label = "BlackHole" },
-	{ id = "shootHeavy", label = "Heavy" },
-	{ id = "shootLaunch", label = "Launch" },
-	{ id = "shootBounce", label = "Bounce" },
-	{ id = "shootExplode", label = "Explode" },
-	{ id = "shootDrop", label = "Drop" },
-	{ id = "shootBomb", label = "Bomb" },
-	{ id = "shootCrash", label = "Crash" },
-	{ id = "shootTime", label = "Time" },
-	{ id = "shootFire", label = "Fire" },
-	{ id = "shootFreeze", label = "Freeze" },
-	{ id = "shootTornado", label = "Tornado" },
-	{ id = "shootLightning", label = "Lightning" },
-	{ id = "shootFlood", label = "Flood" },
-	{ id = "shootGravity", label = "Gravity" },
-	{ id = "shootSlide", label = "Slide" },
-	{ id = "shootInvisible", label = "Invisible" },
-	{ id = "shootUnanchored", label = "Unanchored" },
-	{ id = "shootBigHead", label = "BigHead" },
-	{ id = "shootButterFly", label = "ButterFly" },
-	{ id = "shootPlant", label = "Plant" },
-	{ id = "shootWater", label = "Water" },
-	{ id = "shootMeteor", label = "Meteor" },
-	{ id = "shootStun", label = "Stun" },
-	{ id = "shootSound", label = "Sound" },
-}
+local function getExecutorFunction(name)
+	local ok, fn = pcall(function()
+		local f = rawget(_G, name)
+		if type(f) ~= "function" and type(getgenv) == "function" then
+			f = getgenv()[name]
+		end
+		return f
+	end)
+	if ok and type(fn) == "function" then
+		return fn
+	end
+	return nil
+end
 
-local function applyMode(modeId)
-	if MODE_CONFIG[modeId] == nil then
+-- ===========================================================================
+-- 5. Target scanning (detector-first)
+-- ===========================================================================
+local function isOwnedByPlayer(instance)
+	local character = getCharacter()
+	if character and instance:IsDescendantOf(character) then
+		return true
+	end
+	local backpack = player:FindFirstChild("Backpack")
+	if backpack and instance:IsDescendantOf(backpack) then
+		return true
+	end
+	return false
+end
+
+local function getPartPosition(instance)
+	if instance:IsA("BasePart") then
+		return instance.Position
+	end
+	local part = instance:FindFirstChildWhichIsA("BasePart")
+	if part then
+		return part.Position
+	end
+	return nil
+end
+
+-- Cari target interaktif terdekat. Detector-nya yang dicari lebih dulu,
+-- lalu nama dicocokkan ke detector, parent, dan grandparent.
+local function findInteractable(keywords)
+	local root = getRootPart()
+	if not root then
+		return nil
+	end
+
+	local center = root.Position
+	local best = nil
+	local bestDistance = math.huge
+
+	for _, descendant in ipairs(workspace:GetDescendants()) do
+		local ok = pcall(function()
+			local isClick = descendant:IsA("ClickDetector")
+			local isPrompt = descendant:IsA("ProximityPrompt")
+			if not isClick and not isPrompt then
+				return
+			end
+
+			local parent = descendant.Parent
+			if not parent then
+				return
+			end
+
+			if isOwnedByPlayer(descendant) then
+				return
+			end
+
+			local matched = false
+			if keywords then
+				local names = {
+					descendant.Name,
+					parent.Name,
+					parent.Parent and parent.Parent.Name,
+				}
+				for _, n in ipairs(names) do
+					if nameMatches(n, keywords) then
+						matched = true
+						break
+					end
+				end
+			else
+				matched = true
+			end
+
+			if not matched then
+				return
+			end
+
+			local targetPart
+			if parent:IsA("BasePart") then
+				targetPart = parent
+			else
+				targetPart = parent:FindFirstChildWhichIsA("BasePart")
+			end
+
+			local position = targetPart and targetPart.Position
+			if not position then
+				position = getPartPosition(parent)
+			end
+			if not position then
+				return
+			end
+
+			local distance = (position - center).Magnitude
+			if distance <= CONFIG.range and distance < bestDistance then
+				bestDistance = distance
+				best = {
+					part = targetPart,
+					name = parent.Name,
+					className = parent.ClassName,
+					distance = distance,
+					clickDetector = isClick and descendant or nil,
+					prompt = isPrompt and descendant or nil,
+				}
+			end
+		end)
+	end
+
+	return best
+end
+
+local function findSugarCane()
+	local target = findInteractable(CONFIG.sugarCaneNames)
+	if target then
+		return target
+	end
+
+	if CONFIG.fallbackToAnyClick then
+		local any = findInteractable(nil)
+		if any and any.clickDetector then
+			return any
+		end
+	end
+
+	return nil
+end
+
+local function findPlantSpot()
+	return findInteractable(CONFIG.plantSpotNames)
+end
+
+local function findBreakBlock()
+	return findInteractable(CONFIG.breakBlockNames)
+end
+
+local function findPlaceSpot()
+	return findInteractable(CONFIG.placeSpotNames)
+end
+
+-- ===========================================================================
+-- 6. Interaction helpers
+-- ===========================================================================
+local function fireClickDetector(clickDetector)
+	if not clickDetector then
 		return false
 	end
-	for mode, _ in pairs(MODE_CONFIG) do
-		MODE_CONFIG[mode] = false
+
+	local fire = getExecutorFunction("fireclickdetector")
+	if fire then
+		local ok = pcall(fire, clickDetector)
+		if ok then
+			return true
+		end
+		ok = pcall(fire, clickDetector, 1)
+		if ok then
+			return true
+		end
 	end
-	MODE_CONFIG[modeId] = true
-	return true
+
+	local fireSignal = getExecutorFunction("firesignal")
+	if fireSignal then
+		local ok = pcall(fireSignal, clickDetector.MouseClick)
+		if ok then
+			return true
+		end
+	end
+
+	local fireTouch = getExecutorFunction("firetouchinterest")
+	if fireTouch then
+		local part = clickDetector.Parent
+		if part and part:IsA("BasePart") then
+			local root = getRootPart()
+			local character = getCharacter()
+			local touchers = { root, character }
+			for _, toucher in ipairs(touchers) do
+				if toucher then
+					local ok = pcall(fireTouch, part, toucher, 0)
+					if ok then
+						return true
+					end
+					ok = pcall(fireTouch, part, toucher, 1)
+					if ok then
+						return true
+					end
+				end
+			end
+		end
+	end
+
+	return false
 end
 
-local function createInterface()
+local function fireProximityPrompt(prompt)
+	if not prompt then
+		return false
+	end
+
+	local fire = getExecutorFunction("fireproximityprompt")
+	if fire then
+		local ok = pcall(fire, prompt)
+		if ok then
+			return true
+		end
+	end
+
+	local fireSignal = getExecutorFunction("firesignal")
+	if fireSignal then
+		local ok = pcall(fireSignal, prompt.Triggered)
+		if ok then
+			return true
+		end
+	end
+
+	if prompt.InputHoldBegin and prompt.InputHoldEnd then
+		pcall(prompt.InputHoldBegin, prompt)
+		task.wait(0.08)
+		pcall(prompt.InputHoldEnd, prompt)
+		return true
+	end
+
+	return false
+end
+
+local function interactWithTarget(target)
+	if target.clickDetector then
+		if fireClickDetector(target.clickDetector) then
+			return true
+		end
+	end
+	if target.prompt then
+		if fireProximityPrompt(target.prompt) then
+			return true
+		end
+	end
+	return false
+end
+
+-- ===========================================================================
+-- 7. Farm actions
+-- ===========================================================================
+local function harvestSugarCane()
+	local target = findSugarCane()
+	if not target then
+		return 0, "no target"
+	end
+
+	local part = target.part or target.clickDetector and target.clickDetector.Parent
+	if not part or not part:IsA("BasePart") then
+		return 0, "target has no part"
+	end
+
+	setWalkSpeed(CONFIG.walkSpeed)
+	walkTo(part.Position)
+	if not waitUntilNear(part, CONFIG.interactDistance) then
+		return 0, "target too far"
+	end
+
+	local hits = 0
+	for i = 1, CONFIG.hitCount do
+		if not part.Parent then
+			break
+		end
+		if interactWithTarget(target) then
+			hits += 1
+		end
+		if i < CONFIG.hitCount then
+			task.wait(CONFIG.hitInterval)
+		end
+	end
+
+	if hits == 0 then
+		return 0, "click failed"
+	end
+
+	task.wait(CONFIG.pickupWait)
+	return hits, "ok"
+end
+
+local function plantSeed()
+	local target = findPlantSpot()
+	if not target then
+		return 0, "no plant spot"
+	end
+
+	local part = target.part or target.prompt and target.prompt.Parent
+	if not part or not part:IsA("BasePart") then
+		return 0, "target has no part"
+	end
+
+	setWalkSpeed(CONFIG.walkSpeed)
+	walkTo(part.Position)
+	if not waitUntilNear(part, CONFIG.interactDistance) then
+		return 0, "target too far"
+	end
+
+	if interactWithTarget(target) then
+		task.wait(CONFIG.placeWait)
+		return 1, "ok"
+	end
+
+	return 0, "interact failed"
+end
+
+local function breakBlock()
+	local target = findBreakBlock()
+	if not target then
+		return 0, "no break block"
+	end
+
+	local part = target.part or target.clickDetector and target.clickDetector.Parent
+	if not part or not part:IsA("BasePart") then
+		return 0, "target has no part"
+	end
+
+	setWalkSpeed(CONFIG.walkSpeed)
+	walkTo(part.Position)
+	if not waitUntilNear(part, CONFIG.interactDistance) then
+		return 0, "target too far"
+	end
+
+	local hits = 0
+	for i = 1, CONFIG.breakHits do
+		if not part.Parent then
+			break
+		end
+		if interactWithTarget(target) then
+			hits += 1
+		end
+		if i < CONFIG.breakHits then
+			task.wait(CONFIG.breakInterval)
+		end
+	end
+
+	if hits == 0 then
+		return 0, "break interact failed"
+	end
+
+	task.wait(CONFIG.pickupWait)
+	return hits, "ok"
+end
+
+local function placeBlock()
+	local target = findPlaceSpot()
+	if not target then
+		return 0, "no place spot"
+	end
+
+	local part = target.part or target.prompt and target.prompt.Parent
+	if not part or not part:IsA("BasePart") then
+		return 0, "target has no part"
+	end
+
+	setWalkSpeed(CONFIG.walkSpeed)
+	walkTo(part.Position)
+	if not waitUntilNear(part, CONFIG.interactDistance) then
+		return 0, "target too far"
+	end
+
+	if interactWithTarget(target) then
+		task.wait(CONFIG.placeWait)
+		return 1, "ok"
+	end
+
+	return 0, "place interact failed"
+end
+
+-- ===========================================================================
+-- 8. Loops
+-- ===========================================================================
+local loopRunning = {
+	harvest = true,
+	plant = true,
+	breakBlocks = true,
+	placeBlocks = true,
+}
+
+local function startLoop(name, enabled, action)
+	task.spawn(function()
+		while loopRunning[name] do
+			if enabled() then
+				local ok, err = pcall(action)
+				if not ok then
+					warn("[GrowBlox] " .. name .. " error: " .. tostring(err))
+				end
+			end
+			task.wait(0.5)
+		end
+	end)
+end
+
+startLoop("harvest", function() return CONFIG.autoHarvest end, harvestSugarCane)
+startLoop("plant", function() return CONFIG.autoPlant end, plantSeed)
+startLoop("breakBlocks", function() return CONFIG.autoBreak end, breakBlock)
+startLoop("placeBlocks", function() return CONFIG.autoPlace end, placeBlock)
+
+-- ===========================================================================
+-- 9. Scanner
+-- ===========================================================================
+local function scanNearby(radius)
+	local root = getRootPart()
+	if not root then
+		warn("[GrowBlox] Character not found.")
+		return {}
+	end
+
+	local center = root.Position
+	local found = {}
+
+	for _, descendant in ipairs(workspace:GetDescendants()) do
+		local ok = pcall(function()
+			local isClick = descendant:IsA("ClickDetector")
+			local isPrompt = descendant:IsA("ProximityPrompt")
+			if not isClick and not isPrompt then
+				return
+			end
+
+			local parent = descendant.Parent
+			if not parent then
+				return
+			end
+
+			local part
+			if parent:IsA("BasePart") then
+				part = parent
+			else
+				part = parent:FindFirstChildWhichIsA("BasePart")
+			end
+
+			local position = part and part.Position
+			if not position then
+				return
+			end
+
+			local distance = (position - center).Magnitude
+			if distance <= radius then
+				table.insert(found, {
+					name = parent.Name,
+					className = parent.ClassName,
+					detector = isClick and "ClickDetector" or "ProximityPrompt",
+					distance = math.floor(distance),
+				})
+			end
+		end)
+	end
+
+	table.sort(found, function(a, b)
+		return a.distance < b.distance
+	end)
+
+	return found
+end
+
+local function printScan(radius)
+	local found = scanNearby(radius)
+	warn("[GrowBlox] Scanner: " .. #found .. " interactables within " .. radius .. " studs")
+	for i, entry in ipairs(found) do
+		if i > 50 then
+			warn("[GrowBlox] ... " .. (#found - 50) .. " more (use _G.GrowBlox.scan(radius) for full list)")
+			break
+		end
+		warn(string.format(
+			"[GrowBlox] %d. [%s] %s (%d studs) via %s",
+			i,
+			entry.className,
+			entry.name,
+			entry.distance,
+			entry.detector
+		))
+	end
+	return found
+end
+
+-- ===========================================================================
+-- 10. UI (WindUI + fallback)
+-- ===========================================================================
+local function createWindUi()
 	local windUi = loadstring(game:HttpGet(
 		"https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"
 	))()
@@ -977,39 +709,163 @@ local function createInterface()
 		},
 	})
 
-	local mainTab = window:Tab({
-		Title = "GrowBlox",
-		Desc = "License-free GrowBlox",
+	local farmTab = window:Tab({
+		Title = "Auto Farm",
+		Desc = "Sugar cane auto farm",
 		Icon = "solar:home-2-bold",
 	})
 
-	local modeLabels = {}
-	for _, option in ipairs(MODE_OPTIONS) do
-		table.insert(modeLabels, option.label)
-	end
+	local putTab = window:Tab({
+		Title = "Auto Put/Break",
+		Desc = "Break and place blocks",
+		Icon = "solar:home-2-bold",
+	})
 
-	mainTab:Dropdown({
-		Title = "Mode",
-		Desc = "Select the part mode",
-		Values = modeLabels,
-		Value = "Parts",
-		Callback = function(selected)
-			for _, option in ipairs(MODE_OPTIONS) do
-				if option.label == selected then
-					applyMode(option.id)
-					break
-				end
-			end
+	local scanTab = window:Tab({
+		Title = "Scanner",
+		Desc = "Find nearby object names",
+		Icon = "solar:home-2-bold",
+	})
+
+	farmTab:Toggle({
+		Title = "Auto Harvest",
+		Desc = "Break sugar cane with 2 hits",
+		Value = CONFIG.autoHarvest,
+		Callback = function(state)
+			CONFIG.autoHarvest = state
+			notify("Auto Harvest", state and "ON" or "OFF", 1.5)
 		end,
 	})
 
-	mainTab:Button({
-		Title = "SHOOT",
+	farmTab:Toggle({
+		Title = "Auto Plant",
+		Desc = "Plant seed on empty plot",
+		Value = CONFIG.autoPlant,
+		Callback = function(state)
+			CONFIG.autoPlant = state
+			notify("Auto Plant", state and "ON" or "OFF", 1.5)
+		end,
+	})
+
+	farmTab:Slider({
+		Title = "Range",
+		Desc = "Search radius (studs)",
+		Step = 1,
+		Value = {
+			Min = 5,
+			Max = 100,
+			Default = CONFIG.range,
+		},
+		Callback = function(value)
+			CONFIG.range = value
+		end,
+	})
+
+	farmTab:Slider({
+		Title = "Interact Distance",
+		Desc = "Walk until this close (studs)",
+		Step = 1,
+		Value = {
+			Min = 5,
+			Max = 30,
+			Default = CONFIG.interactDistance,
+		},
+		Callback = function(value)
+			CONFIG.interactDistance = value
+		end,
+	})
+
+	farmTab:Slider({
+		Title = "Hit Interval",
+		Desc = "Delay between 2 hits (seconds)",
+		Step = 0.1,
+		Value = {
+			Min = 0.1,
+			Max = 2,
+			Default = CONFIG.hitInterval,
+		},
+		Callback = function(value)
+			CONFIG.hitInterval = value
+		end,
+	})
+
+	putTab:Toggle({
+		Title = "Auto Break",
+		Desc = "Break nearby breakable blocks",
+		Value = CONFIG.autoBreak,
+		Callback = function(state)
+			CONFIG.autoBreak = state
+			notify("Auto Break", state and "ON" or "OFF", 1.5)
+		end,
+	})
+
+	putTab:Toggle({
+		Title = "Auto Place",
+		Desc = "Place block on empty spot",
+		Value = CONFIG.autoPlace,
+		Callback = function(state)
+			CONFIG.autoPlace = state
+			notify("Auto Place", state and "ON" or "OFF", 1.5)
+		end,
+	})
+
+	putTab:Slider({
+		Title = "Break Hits",
+		Desc = "Hits needed to break a block",
+		Step = 1,
+		Value = {
+			Min = 1,
+			Max = 10,
+			Default = CONFIG.breakHits,
+		},
+		Callback = function(value)
+			CONFIG.breakHits = value
+		end,
+	})
+
+	putTab:Slider({
+		Title = "Break Interval",
+		Desc = "Delay between break hits (seconds)",
+		Step = 0.1,
+		Value = {
+			Min = 0.1,
+			Max = 2,
+			Default = CONFIG.breakInterval,
+		},
+		Callback = function(value)
+			CONFIG.breakInterval = value
+		end,
+	})
+
+	putTab:Slider({
+		Title = "Place Delay",
+		Desc = "Wait after placing (seconds)",
+		Step = 0.1,
+		Value = {
+			Min = 0.1,
+			Max = 2,
+			Default = CONFIG.placeWait,
+		},
+		Callback = function(value)
+			CONFIG.placeWait = value
+		end,
+	})
+
+	scanTab:Button({
+		Title = "Scan Nearby (30 studs)",
+		Desc = "Print object names to console",
 		Justify = "Center",
-		Color = Color3.fromRGB(0, 200, 160),
-		Icon = "",
 		Callback = function()
-			firePrimary()
+			printScan(30)
+		end,
+	})
+
+	scanTab:Button({
+		Title = "Scan Wide (100 studs)",
+		Desc = "Print more object names",
+		Justify = "Center",
+		Callback = function()
+			printScan(100)
 		end,
 	})
 
@@ -1020,53 +876,169 @@ local function createInterface()
 	}
 end
 
--- ===========================================================================
--- 13. Error boundary
--- ===========================================================================
-local uiOk, uiHandle = pcall(createInterface)
-if not uiOk then
-	warn("GrowBlox UI initialization failed: " .. tostring(uiHandle))
-end
+local function createFallbackUi()
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "HipHub_GrowBlox"
+	screenGui.ResetOnSpawn = false
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-local function onInputBegan(input, gameProcessed)
-	if gameProcessed then
-		return
-	end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		if isMobileDevice() then
-			return
+	pcall(function()
+		local parent
+		if type(gethui) == "function" then
+			parent = gethui()
 		end
-		firePrimary()
+		if not parent then
+			parent = player:WaitForChild("PlayerGui")
+		end
+		screenGui.Parent = parent
+	end)
+
+	local frame = Instance.new("Frame")
+	frame.Name = "Main"
+	frame.Size = UDim2.new(0, 230, 0, 246)
+	frame.Position = UDim2.new(0, 10, 0.5, -123)
+	frame.BackgroundColor3 = Color3.fromRGB(20, 24, 44)
+	frame.BorderSizePixel = 0
+	frame.Parent = screenGui
+
+	local frameCorner = Instance.new("UICorner")
+	frameCorner.CornerRadius = UDim.new(0, 10)
+	frameCorner.Parent = frame
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -20, 0, 30)
+	title.Position = UDim2.new(0, 10, 0, 8)
+	title.BackgroundTransparency = 1
+	title.Text = "GrowBlox (License-Free)"
+	title.TextColor3 = Color3.fromRGB(255, 255, 255)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 14
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = frame
+
+	local function addToggleButton(buttonName, configKey, y)
+		local button = Instance.new("TextButton")
+		button.Name = configKey
+		button.Size = UDim2.new(1, -20, 0, 34)
+		button.Position = UDim2.new(0, 10, 0, y)
+		button.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
+		button.BorderSizePixel = 0
+		button.Text = buttonName .. ": " .. (CONFIG[configKey] and "ON" or "OFF")
+		button.TextColor3 = Color3.fromRGB(255, 255, 255)
+		button.Font = Enum.Font.GothamBold
+		button.TextSize = 13
+		button.AutoButtonColor = true
+		button.Parent = frame
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 6)
+		corner.Parent = button
+
+		button.MouseButton1Click:Connect(function()
+			CONFIG[configKey] = not CONFIG[configKey]
+			button.Text = buttonName .. ": " .. (CONFIG[configKey] and "ON" or "OFF")
+			notify(buttonName, CONFIG[configKey] and "ON" or "OFF", 1.5)
+		end)
+	end
+
+	addToggleButton("Auto Harvest", "autoHarvest", 44)
+	addToggleButton("Auto Plant", "autoPlant", 84)
+	addToggleButton("Auto Break", "autoBreak", 124)
+	addToggleButton("Auto Place", "autoPlace", 164)
+
+	local scanButton = Instance.new("TextButton")
+	scanButton.Size = UDim2.new(1, -20, 0, 34)
+	scanButton.Position = UDim2.new(0, 10, 0, 204)
+	scanButton.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+	scanButton.BorderSizePixel = 0
+	scanButton.Text = "SCAN NEARBY (30)"
+	scanButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+	scanButton.Font = Enum.Font.GothamBold
+	scanButton.TextSize = 13
+	scanButton.Parent = frame
+
+	local scanCorner = Instance.new("UICorner")
+	scanCorner.CornerRadius = UDim.new(0, 6)
+	scanCorner.Parent = scanButton
+
+	scanButton.MouseButton1Click:Connect(function()
+		printScan(30)
+	end)
+
+	return {
+		lib = nil,
+		window = nil,
+		screenGui = screenGui,
+	}
+end
+
+-- ===========================================================================
+-- 11. Error boundary
+-- ===========================================================================
+local uiOk, uiHandle = pcall(createWindUi)
+if not uiOk then
+	warn("[GrowBlox] WindUI failed (" .. tostring(uiHandle) .. "), using built-in fallback UI")
+	uiOk, uiHandle = pcall(createFallbackUi)
+	if not uiOk then
+		warn("[GrowBlox] Fallback UI also failed: " .. tostring(uiHandle))
+		uiHandle = nil
 	end
 end
 
-pcall(function()
-	if UIS and UIS.InputBegan then
-		UIS.InputBegan:Connect(onInputBegan)
-	end
+-- ===========================================================================
+-- 12. Startup report
+-- ===========================================================================
+task.spawn(function()
+	task.wait(2)
+	local cane = findSugarCane()
+	local spot = findPlantSpot()
+	local block = findBreakBlock()
+	local place = findPlaceSpot()
+
+	warn(string.format(
+		"[GrowBlox] Detected -> cane: %s | plant: %s | break: %s | place: %s",
+		cane and ("\"" .. cane.name .. "\"") or "none",
+		spot and ("\"" .. spot.name .. "\"") or "none",
+		block and ("\"" .. block.name .. "\"") or "none",
+		place and ("\"" .. place.name .. "\"") or "none"
+	))
+
+	notify(
+		"GrowBlox Loaded",
+		"Cane: " .. (cane and cane.name or "none")
+			.. " | Plant: " .. (spot and spot.name or "none")
+			.. " | Break: " .. (block and block.name or "none")
+			.. " | Place: " .. (place and place.name or "none"),
+		5
+	)
 end)
 
 -- ===========================================================================
--- 14. Public test/debug API
+-- 13. Public test/debug API
 -- ===========================================================================
 _G.GrowBlox = {
-	fire = firePrimary,
-	setMode = applyMode,
-	getActiveMode = function()
-		for mode, enabled in pairs(MODE_CONFIG) do
-			if enabled then
-				return mode
-			end
-		end
-		return nil
-	end,
+	config = CONFIG,
+	harvestNow = harvestSugarCane,
+	plantNow = plantSeed,
+	breakNow = breakBlock,
+	placeNow = placeBlock,
+	scan = scanNearby,
+	printScan = printScan,
+	findSugarCane = findSugarCane,
+	findPlantSpot = findPlantSpot,
+	findBreakBlock = findBreakBlock,
+	findPlaceSpot = findPlaceSpot,
 	getUi = function()
 		return uiHandle and uiHandle.screenGui
 	end,
 	destroy = function()
-		if uiHandle and uiHandle.window and uiHandle.window.Destroy then
-			pcall(uiHandle.window.Destroy, uiHandle.window)
+		if uiHandle and uiHandle.screenGui then
+			safeDestroy(uiHandle.screenGui)
 		end
+		loopRunning.harvest = false
+		loopRunning.plant = false
+		loopRunning.breakBlocks = false
+		loopRunning.placeBlocks = false
 		_G.HipHub_GrowBlox_Running = nil
 		_G.GrowBlox = nil
 	end,
