@@ -197,6 +197,9 @@ if not refsOk then
 	task.wait(3)
 	scanRefs()
 end
+if not Refs.World then
+	print("[GrowBlox] FATAL: world tidak ditemukan. Pastikan sudah masuk world.")
+end
 
 -- ===========================================================================
 -- Modul game (seperti k.lua)
