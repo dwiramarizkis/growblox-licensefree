@@ -182,8 +182,10 @@ local function scanRefs()
 				Refs.World = v
 			end
 			-- Inventory: slots + capacity (remove/count bisa via metatable)
+			-- PERBAIKAN: sebelumnya capacity dicek `~= nil`, tapi banyak tabel
+			-- lain (UI) juga punya slots. Cari yang slot-nya berisi {id, n}.
 			if not Refs.Inv and type(rawget(v, "slots")) == "table"
-				and (rawget(v, "capacity") ~= nil or type(rawget(v, "count")) == "function") then
+				and type(rawget(v, "capacity")) == "number" then
 				Refs.Inv = v
 			end
 			-- State holder: state function
