@@ -623,12 +623,20 @@ task.spawn(function()
 		local px, py = getPlayerTile()
 		if px then
 			print("[GrowBlox] playerTile=" .. px .. "," .. py)
-			for y = py - 1, py + 1 do
-				local row = {}
-				for x = px - 1, px + 1 do
-					row[#row + 1] = x .. ":" .. tostring(tileAt("fg", x, y) or "?")
+			-- Coba BEBERAPA interpretasi grid: fg[y][x] dan fg[x][y]
+			if Refs.World then
+				print("[GrowBlox] world keys: " .. table.concat((function()
+					local k = {}
+					for key in pairs(Refs.World) do k[#k + 1] = tostring(key) end
+					return k
+				end)(), ","))
+				for y = py - 1, py + 1 do
+					local row = {}
+					for x = px - 1, px + 1 do
+						row[#row + 1] = x .. ":" .. tostring(tileAt("fg", x, y) or "?")
+					end
+					print("[GrowBlox] grid y=" .. y .. " " .. table.concat(row, " "))
 				end
-				print("[GrowBlox] grid y=" .. y .. " " .. table.concat(row, " "))
 			end
 			local tiles = tilesAround(px, py, CONFIG.range)
 			print("[GrowBlox] tilesAround count=" .. tostring(#tiles))
