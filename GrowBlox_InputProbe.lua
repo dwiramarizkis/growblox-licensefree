@@ -87,7 +87,7 @@ local function listButtons(parent, depth, maxCount)
 	maxCount = maxCount or 60
 	local out = {}
 	local function walk(p, d)
-		if d > 6 then return end
+		if d > 8 then return end
 		for _, c in ipairs(p:GetChildren()) do
 			if c:IsA("TextButton") or c:IsA("ImageButton") or c:IsA("TextLabel") or c:IsA("ImageLabel") then
 				if #out < maxCount then
@@ -122,6 +122,20 @@ pcall(function()
 		add("PlayerGui buttons", tostring(#buttons))
 		for i, b in ipairs(buttons) do
 			add("PG" .. i, b)
+		end
+	else
+		add("PlayerGui", "TIDAK ADA")
+	end
+end)
+
+-- Rekam juga CoreGui (biasanya tempat GUI executor)
+pcall(function()
+	local cg = game:GetService("CoreGui")
+	if cg then
+		local buttons = listButtons(cg)
+		add("CoreGui buttons", tostring(#buttons))
+		for i, b in ipairs(buttons) do
+			add("CG" .. i, b)
 		end
 	end
 end)
