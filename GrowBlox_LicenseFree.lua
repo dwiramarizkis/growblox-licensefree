@@ -526,25 +526,33 @@ local function autoBreakOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
 
-	-- Target hanya tile fg terisi; lewati yang baru saja dipukul.
-	local target = nil
+	-- Cari semua tile terisi yang siap dipukul (bukan cooldown),
+	-- lalu pukul BERGANTIAN seperti k.lua.
+	local ready = {}
 	local now = os.clock()
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
 		if breakable(t.fg) then
 			local key = t.x .. "," .. t.y
 			if not lastPunch[key] or (now - lastPunch[key]) >= CONFIG.punchCooldown then
-				target = t
-				break
+				ready[#ready + 1] = t
 			end
 		end
 	end
-	if not target then return false, "no breakable" end
+	if #ready == 0 then return false, "no breakable ready" end
 
+	-- Pilih tile yang paling lama tidak dipukul (round-robin sederhana)
+	table.sort(ready, function(a, b)
+		local ka = a.x .. "," .. a.y
+		local kb = b.x .. "," .. b.y
+		local ta = lastPunch[ka] or 0
+		local tb = lastPunch[kb] or 0
+		return ta < tb
+	end)
+
+	local target = ready[1]
 	local r = tryBreak(target.x, target.y)
 	if r == "hit" or r == "broke" then
 		return true, "break " .. target.x .. "," .. target.y .. " id=" .. tostring(target.fg)
-	elseif r == "cooldown" then
-		return false, "cooldown " .. target.x .. "," .. target.y
 	end
 	return false, "break failed: " .. tostring(r)
 end
