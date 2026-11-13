@@ -427,7 +427,7 @@ local function punchTile(x, y)
 end
 
 local function breakable(id)
-	return id ~= 0 and id ~= nil
+	return type(id) == "number" and id > 0
 end
 
 -- ===========================================================================
@@ -470,8 +470,7 @@ local function autoBreakOnce()
 	-- Hanya tile fg di baris sekitar karakter (bukan background).
 	local target = nil
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
-		-- Lewati tile yang persis di bawah kaki bila itu lantai background
-		if t.fg ~= 0 and breakable(t.fg) then
+		if breakable(t.fg) then
 			target = t
 			break
 		end
@@ -491,7 +490,7 @@ local function autoPlaceOnce()
 	if not px then return false, "no state" end
 	local target = nil
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
-		if t.fg == 0 then
+		if t.fg == 0 or t.fg == "" or t.fg == nil then
 			target = t
 			break
 		end
@@ -507,7 +506,7 @@ local function autoPlantOnce()
 	if not px then return false, "no state" end
 	local target = nil
 	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
-		if t.fg == 0 then
+		if t.fg == 0 or t.fg == "" or t.fg == nil then
 			target = t
 			break
 		end
@@ -549,12 +548,12 @@ local function pnbTick()
 	-- Eksekusi pada sel terpilih saja
 	for _, t in ipairs(gridTiles) do
 		if selectedTiles[t.x .. "," .. t.y] then
-			if t.fg ~= 0 and CONFIG.pnbBreakOccupied then
+			if breakable(t.fg) and CONFIG.pnbBreakOccupied then
 				local ok = punchTile(t.x, t.y)
 				if ok then
 					return true, "pnb break " .. t.x .. "," .. t.y
 				end
-			elseif t.fg == 0 and CONFIG.pnbPlaceEmpty then
+			elseif (t.fg == 0 or t.fg == "" or t.fg == nil) and CONFIG.pnbPlaceEmpty then
 				if invCount(CONFIG.placeId) > 0 then
 					local ok = placeTile("fg", t.x, t.y, CONFIG.placeId)
 					if ok then
@@ -868,12 +867,12 @@ local function createGui()
 							local selected = selectedTiles[tx .. "," .. ty] == true
 							if selected then
 								cell.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
-							elseif fg ~= 0 then
+							elseif breakable(fg) then
 								cell.BackgroundColor3 = Color3.fromRGB(80, 60, 30)
 							else
 								cell.BackgroundColor3 = Color3.fromRGB(30, 36, 60)
 							end
-							cell.Text = (fg == 0 and "0" or tostring(fg))
+							cell.Text = (breakable(fg) and tostring(fg) or "0")
 						end
 					end
 				end
