@@ -136,9 +136,17 @@ local function isPunchFn(fn)
 end
 
 local function scanRefs()
-	if not getgc then return false end
+	if not getgc then
+		print("[GrowBlox] getgc TIDAK ADA")
+		return false
+	end
 	local ok, all = pcall(getgc, true)
-	if not ok or type(all) ~= "table" then return false end
+	if not ok or type(all) ~= "table" then
+		print("[GrowBlox] getgc(true) gagal: " .. tostring(all))
+		return false
+	end
+	print("[GrowBlox] getgc objects=" .. tostring(#all))
+
 	local punchSeen, settileSeen = {}, {}
 	for _, v in ipairs(all) do
 		if type(v) == "table" then
@@ -161,16 +169,21 @@ local function scanRefs()
 	end
 	Refs.SetTile = settileSeen[1]
 	Refs.Punch = punchSeen[1]
-	print(string.format("[GrowBlox] refs: world=%s state=%s inv=%s settile=%s punch=%s",
+	print(string.format("[GrowBlox] refs: world=%s state=%s inv=%s settile=%s punch=%s (setcand=%d punchcand=%d)",
 		tostring(Refs.World ~= nil),
 		tostring(Refs.State ~= nil),
 		tostring(Refs.Inv ~= nil),
 		tostring(Refs.SetTile ~= nil),
-		tostring(Refs.Punch ~= nil)))
+		tostring(Refs.Punch ~= nil),
+		#settileSeen,
+		#punchSeen))
 	return Refs.World ~= nil
 end
 
-scanRefs()
+local refsOk = scanRefs()
+if not refsOk then
+	notify("GrowBlox", "Gagal menemukan world. Jalankan ulang di dalam world.", 4)
+end
 
 -- ===========================================================================
 -- Modul game (seperti k.lua)
