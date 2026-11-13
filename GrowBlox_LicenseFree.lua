@@ -486,7 +486,7 @@ end
 
 local function tryPlace(x, y, id)
 	if not id or invCount(id) <= 0 then return "habis" end
-	if fgIdAt(x, y) ~= 0 then return nil end
+	-- JANGAN cek tile kosong dulu; biarkan server yang memutuskan.
 	if not sendSetTile("fg", x, y, id) then return nil end
 	invRemove(id, 1) -- persis k.lua
 	return "place"
@@ -502,17 +502,12 @@ local function tryBreak(x, y)
 	end
 	lastPunch[key] = now
 
-	local id = fgIdAt(x, y)
-	if not breakable(id) then return nil end
+	-- JANGAN cek tile kosong dulu; biarkan server yang memutuskan.
+	-- (Grid lokal world.fg di game ini tidak merepresentasikan tile asli.)
 
 	if Refs.Punch then
 		local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
 		if ok then
-			-- Cek tile berubah setelah pukulan (persis k.lua)
-			local newId = fgIdAt(x, y)
-			if newId ~= id then
-				return "broke"
-			end
 			return "hit"
 		end
 		warn("[GrowBlox] punch error: " .. tostring(err))
