@@ -17,16 +17,24 @@ local UIS = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 
 local function globalFn(name)
-	local f = rawget(_G, name)
-	if type(f) ~= "function" and type(getgenv) == "function" then
-		pcall(function() f = getgenv()[name] end)
-	end
-	if type(f) == "function" then return f end
+	local ok, f = pcall(function()
+		local r = rawget(_G, name)
+		if type(r) ~= "function" and type(getgenv) == "function" then
+			r = getgenv()[name]
+		end
+		return r
+	end)
+	if ok and type(f) == "function" then return f end
 	return nil
 end
 
 local getgc = globalFn("getgc")
-local getconsts = globalFn("getconstants") or (type(debug) == "table" and debug.getconstants) or nil
+local getconsts = globalFn("getconstants")
+if not getconsts and type(debug) == "table" then
+	pcall(function() getconsts = debug.getconstants end)
+end
+
+print("[GrowBlox] executor: getgc=" .. tostring(getgc ~= nil) .. " getconstants=" .. tostring(getconsts ~= nil))
 
 -- ===========================================================================
 -- 1. Konfigurasi
@@ -106,9 +114,16 @@ end
 
 local function scanRefs()
 	if not getgc then
+		print("[GrowBlox] scanRefs: getgc nil")
 		return false
 	end
-	for _, v in ipairs(getgc(true)) do
+	local okList, all = pcall(getgc, true)
+	if not okList or type(all) ~= "table" then
+		print("[GrowBlox] scanRefs: getgc(true) gagal: " .. tostring(all))
+		return false
+	end
+	print("[GrowBlox] scanRefs: getgc objects=" .. tostring(#all))
+	for _, v in ipairs(all) do
 		if type(v) == "table" then
 			if not Refs.World then
 				local ok, isW = pcall(isWorldTbl, v)
@@ -123,11 +138,21 @@ local function scanRefs()
 				if ok and isS then Refs.State = rawget(v, "state") end
 			end
 		elseif type(v) == "function" then
-			if not Refs.SetTile and hasConstPair(v, "placedAt", "flips") then
-				Refs.SetTile = v
+			if not Refs.SetTile then
+				-- Pola 1: konstanta "placedAt"+"flips" (k.lua)
+				if hasConstPair(v, "placedAt", "flips") then
+					Refs.SetTile = v
+				-- Pola 2: konstanta "tileChanged"+"layer"+"flip"
+				elseif hasConst(v, "tileChanged") and hasConst(v, "flip") then
+					Refs.SetTile = v
+				end
 			end
-			if not Refs.Punch and hasConstPair(v, "punch", "punch_miss") then
-				Refs.Punch = v
+			if not Refs.Punch then
+				if hasConstPair(v, "punch", "punch_miss")
+					or hasConstPair(v, "punchEvent", "punch_miss")
+					or (hasConst(v, "punchEvent") and hasConst(v, "punchCount")) then
+					Refs.Punch = v
+				end
 			end
 		end
 		if Refs.World and Refs.Inv and Refs.State and Refs.SetTile and Refs.Punch then
