@@ -73,13 +73,11 @@ local Refs = {
 
 local function isWorldTbl(v)
 	return type(rawget(v, "fg")) == "table" and type(rawget(v, "bg")) == "table"
-		and type(rawget(v, "w")) == "number" and type(rawget(v, "h")) == "number"
 end
 
 local function isInvTbl(v)
 	return type(rawget(v, "slots")) == "table"
 		and (rawget(v, "capacity") ~= nil or type(rawget(v, "count")) == "function")
-		and type(rawget(v, "remove")) == "function"
 end
 
 local function isStateHolder(v)
@@ -150,17 +148,14 @@ local function scanRefs()
 	local punchSeen, settileSeen = {}, {}
 	for _, v in ipairs(all) do
 		if type(v) == "table" then
-			-- World: cukup fg/bg + w/h (tanpa spawn)
+			-- World: cukup fg/bg (tanpa w/h)
 			if not Refs.World and type(rawget(v, "fg")) == "table"
-				and type(rawget(v, "bg")) == "table"
-				and type(rawget(v, "w")) == "number"
-				and type(rawget(v, "h")) == "number" then
+				and type(rawget(v, "bg")) == "table" then
 				Refs.World = v
 			end
-			-- Inventory: slots + remove + count (count bisa method/function)
+			-- Inventory: slots + capacity (remove/count bisa via metatable)
 			if not Refs.Inv and type(rawget(v, "slots")) == "table"
-				and type(rawget(v, "remove")) == "function"
-				and (type(rawget(v, "count")) == "function" or type(rawget(v, "capacity")) == "number") then
+				and (rawget(v, "capacity") ~= nil or type(rawget(v, "count")) == "function") then
 				Refs.Inv = v
 			end
 			-- State holder: state function
@@ -279,10 +274,11 @@ end
 
 local function tileAt(layer, x, y)
 	local w = Refs.World
-	if not w or x < 0 or y < 0 or x >= w.w or y >= w.h then return nil end
+	if not w then return nil end
 	local grid = w[layer]
 	local row = grid and grid[y]
-	return row and (row[x] or 0) or nil
+	if not row then return nil end
+	return row[x] or 0
 end
 
 local function fgIdAt(x, y)
@@ -293,15 +289,16 @@ end
 
 local function invCount(id)
 	if not Refs.Inv then return 0 end
-	-- Coba method count
-	local cnt = rawget(Refs.Inv, "count")
-	if type(cnt) == "function" then
-		local ok, n = pcall(cnt, Refs.Inv, id)
-		if ok and type(n) == "number" then return n end
-		-- fallback: count tanpa self
-		local ok2, n2 = pcall(cnt, id)
-		if ok2 and type(n2) == "number" then return n2 end
-	end
+	-- Method count (bisa via metatable)
+	pcall(function()
+		local cnt = Refs.Inv.count
+		if type(cnt) == "function" then
+			local ok, n = pcall(cnt, Refs.Inv, id)
+			if ok and type(n) == "number" then return n end
+			local ok2, n2 = pcall(cnt, id)
+			if ok2 and type(n2) == "number" then return n2 end
+		end
+	end)
 	-- Fallback: cari di slots
 	for _, slot in ipairs(Refs.Inv.slots or {}) do
 		if type(slot) == "table" and slot.id == id then
@@ -313,12 +310,28 @@ end
 
 local function invRemove(id, n)
 	if not Refs.Inv then return false end
-	local rm = rawget(Refs.Inv, "remove")
-	if type(rm) ~= "function" then return false end
-	local ok = pcall(rm, Refs.Inv, id, n or 1)
-	if ok then return true end
-	-- fallback: tanpa self
-	return pcall(rm, id, n or 1)
+	-- Method remove (bisa via metatable)
+	local ok = false
+	pcall(function()
+		local rm = Refs.Inv.remove
+		if type(rm) == "function" then
+			ok = pcall(rm, Refs.Inv, id, n or 1)
+			if not ok then
+				ok = pcall(rm, id, n or 1)
+			end
+		end
+	end)
+	if not ok then
+		-- Fallback: kurangi slot.n langsung
+		for _, slot in ipairs(Refs.Inv.slots or {}) do
+			if type(slot) == "table" and slot.id == id and (slot.n or 0) > 0 then
+				slot.n = slot.n - (n or 1)
+				ok = true
+				break
+			end
+		end
+	end
+	return ok
 end
 
 local function breakable(id)
