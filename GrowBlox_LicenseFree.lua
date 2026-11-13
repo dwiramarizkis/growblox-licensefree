@@ -241,6 +241,8 @@ if Shared then
 	pcall(function() NetOk, Net = pcall(require, Shared:FindFirstChild("Net")) end)
 end
 
+print("[GrowBlox] NetOk=" .. tostring(NetOk) .. " Shared=" .. tostring(Shared ~= nil) .. " SetTileRemote=" .. tostring(SetTileRemote ~= nil))
+
 -- WorldMenu module untuk hook gerakan (k.lua)
 local MenuModule = nil
 local MenuModOk = false
@@ -512,21 +514,16 @@ local function tryBreak(x, y)
 	end
 	lastPunch[key] = now
 
-	-- JANGAN cek tile kosong dulu; biarkan server yang memutuskan.
-	-- (Grid lokal world.fg di game ini tidak merepresentasikan tile asli.)
-
 	if Refs.Punch then
 		local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
 		if ok then
 			return "hit"
 		end
 		warn("[GrowBlox] punch error: " .. tostring(err))
+		return nil
 	end
 
-	-- Fallback: set tile 0 (server-authoritative)
-	if sendSetTile("fg", x, y, 0) then
-		return "broke"
-	end
+	warn("[GrowBlox] Refs.Punch TIDAK ADA")
 	return nil
 end
 
