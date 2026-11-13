@@ -10,7 +10,13 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local PlayerGui = player:FindFirstChild("PlayerGui")
 
-print("[MenuProbe] PlayerGui=" .. tostring(PlayerGui ~= nil))
+local lines = {}
+local function add(line)
+	lines[#lines + 1] = line
+	print("[MenuProbe] " .. line)
+end
+
+add("PlayerGui=" .. tostring(PlayerGui ~= nil))
 
 local function walk(parent, depth)
 	depth = depth or 0
@@ -20,7 +26,7 @@ local function walk(parent, depth)
 		if c:IsA("ModuleScript") then tag = " [Module]" end
 		if c:IsA("LocalScript") then tag = " [LocalScript]" end
 		if c:IsA("Script") then tag = " [Script]" end
-		print("[MenuProbe] " .. string.rep("  ", depth) .. c.Name .. " [" .. c.ClassName .. "]" .. tag)
+		add(string.rep("  ", depth) .. c.Name .. " [" .. c.ClassName .. "]" .. tag)
 
 		if c:IsA("ModuleScript") then
 			pcall(function()
@@ -33,7 +39,7 @@ local function walk(parent, depth)
 						end
 					end
 					if #keys > 0 then
-						print("[MenuProbe]   functions: " .. table.concat(keys, ", "))
+						add("  functions: " .. table.concat(keys, ", "))
 					end
 				end
 			end)
@@ -48,7 +54,7 @@ end
 if PlayerGui then
 	walk(PlayerGui, 0)
 else
-	print("[MenuProbe] PlayerGui belum ada")
+	add("PlayerGui belum ada")
 end
 
 -- Cari fungsi di getgc yang menerima "keyLeft"
@@ -78,7 +84,6 @@ if getgc then
 				if hasKeyLeft then
 					found += 1
 					if found <= 10 then
-						-- cari upvalue yang berupa table
 						local gu = globalFn("getupvalue")
 						if gu then
 							for i = 1, 12 do
@@ -90,7 +95,7 @@ if getgc then
 										keys[#keys + 1] = tostring(k)
 										if #keys >= 12 then break end
 									end
-									print("[MenuProbe] Fn" .. found .. " up" .. i .. "(" .. tostring(name) .. ") table keys: " .. table.concat(keys, ","))
+									add("Fn" .. found .. " up" .. i .. "(" .. tostring(name) .. ") table keys: " .. table.concat(keys, ","))
 								end
 							end
 						end
@@ -99,7 +104,115 @@ if getgc then
 			end
 		end
 	end
-	print("[MenuProbe] Fungsi dengan konstanta keyLeft: " .. tostring(found))
+	add("Fungsi dengan konstanta keyLeft: " .. tostring(found))
 end
 
-print("[MenuProbe] Selesai")
+add("Selesai")
+
+-- Simpan ke file + GUI COPY
+local fullReport = table.concat(lines, "\n")
+pcall(function()
+	if writefile then
+		writefile("GrowBlox_MenuProbe.txt", fullReport)
+	end
+end)
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "GrowBloxMenuProbe"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function()
+	local parent
+	if type(gethui) == "function" then parent = gethui() end
+	if not parent then parent = player:FindFirstChild("PlayerGui") end
+	if not parent then parent = game:GetService("CoreGui") end
+	screenGui.Parent = parent
+end)
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 320, 0, 200)
+frame.Position = UDim2.new(0.5, -160, 1, -204)
+frame.AnchorPoint = Vector2.new(0.5, 1)
+frame.BackgroundColor3 = Color3.fromRGB(15, 18, 32)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -70, 0, 24)
+title.Position = UDim2.new(0, 10, 0, 4)
+title.BackgroundTransparency = 1
+title.Text = "MenuProbe"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 12
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = frame
+
+local copyBtn = Instance.new("TextButton")
+copyBtn.Size = UDim2.new(0, 60, 0, 20)
+copyBtn.Position = UDim2.new(1, -68, 0, 4)
+copyBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+copyBtn.BorderSizePixel = 0
+copyBtn.Text = "COPY"
+copyBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+copyBtn.Font = Enum.Font.GothamBold
+copyBtn.TextSize = 10
+copyBtn.Parent = frame
+
+local copyCorner = Instance.new("UICorner")
+copyCorner.CornerRadius = UDim.new(0, 4)
+copyCorner.Parent = copyBtn
+
+copyBtn.MouseButton1Click:Connect(function()
+	pcall(function()
+		if setclipboard then
+			setclipboard(fullReport)
+			copyBtn.Text = "OK"
+			task.wait(1)
+			copyBtn.Text = "COPY"
+		end
+	end)
+end)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -20, 1, -34)
+scroll.Position = UDim2.new(0, 10, 0, 28)
+scroll.BackgroundColor3 = Color3.fromRGB(22, 27, 48)
+scroll.BorderSizePixel = 0
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.ScrollBarThickness = 5
+scroll.Parent = frame
+
+local scrollCorner = Instance.new("UICorner")
+scrollCorner.CornerRadius = UDim.new(0, 5)
+scrollCorner.Parent = scroll
+
+local text = Instance.new("TextLabel")
+text.Size = UDim2.new(1, -12, 0, 0)
+text.Position = UDim2.new(0, 6, 0, 6)
+text.BackgroundTransparency = 1
+text.Text = fullReport
+text.TextColor3 = Color3.fromRGB(220, 235, 255)
+text.Font = Enum.Font.Code
+text.TextSize = 10
+text.TextWrapped = true
+text.TextXAlignment = Enum.TextXAlignment.Left
+text.TextYAlignment = Enum.TextYAlignment.Top
+text.RichText = true
+text.Parent = scroll
+
+task.spawn(function()
+	task.wait(0.3)
+	pcall(function()
+		local h = text.TextBounds.Y + 16
+		text.Size = UDim2.new(1, -12, 0, h)
+		scroll.CanvasSize = UDim2.new(0, 0, 0, h)
+	end)
+end)
