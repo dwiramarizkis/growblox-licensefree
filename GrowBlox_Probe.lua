@@ -31,6 +31,21 @@ local getgc = globalFn("getgc")
 local getconsts = globalFn("getconstants")
 local getupval = globalFn("getupvalue")
 local islclosure = globalFn("islclosure")
+local getinfo = globalFn("getinfo")
+
+-- Debug global? (biasanya tidak ada di Delta; kalau ada, bantu identifikasi)
+local getInfoFn = getinfo
+if not getInfoFn and type(debug) == "table" and type(debug.getinfo) == "function" then
+	getInfoFn = debug.getinfo
+end
+local getConstantsFn = getconsts
+if not getConstantsFn and type(debug) == "table" and type(debug.getconstants) == "function" then
+	getConstantsFn = debug.getconstants
+end
+local getUpvalueFn = getupval
+if not getUpvalueFn and type(debug) == "table" and type(debug.getupvalue) == "function" then
+	getUpvalueFn = debug.getupvalue
+end
 
 add("PlaceId", tostring(game.PlaceId))
 add("Player", tostring(player and player.Name))
@@ -81,8 +96,8 @@ local function describe(v, depth)
 end
 
 local function getConsts(fn)
-	if not getconsts then return nil end
-	local ok, consts = pcall(getconsts, fn)
+	if not getConstantsFn then return nil end
+	local ok, consts = pcall(getConstantsFn, fn)
 	if not ok or type(consts) ~= "table" then return nil end
 	return consts
 end
@@ -128,9 +143,8 @@ end
 
 local function constPreview(fn, limit)
 	limit = limit or 14
-	if not getconsts then return "" end
-	local ok, consts = pcall(getconsts, fn)
-	if not ok or type(consts) ~= "table" then return "" end
+	local consts = getConsts(fn)
+	if not consts then return "" end
 	local seen = {}
 	local out = {}
 	for _, c in ipairs(consts) do
@@ -145,10 +159,10 @@ end
 
 local function upvaluePreview(fn, limit)
 	limit = limit or 10
-	if not getupval then return "" end
+	if not getUpvalueFn then return "" end
 	local out = {}
 	for i = 1, 40 do
-		local ok, name, val = pcall(getupval, fn, i)
+		local ok, name, val = pcall(getUpvalueFn, fn, i)
 		if not ok then break end
 		if val ~= nil then
 			local remoteName = nil
