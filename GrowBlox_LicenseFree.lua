@@ -675,23 +675,21 @@ local function autoBreakOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
 
-	-- Cari tile terisi yang siap dipukul, dari yang terdekat.
-	local target = nil
-	local now = os.clock()
-	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
-		if breakable(t.fg) then
-			local key = t.x .. "," .. t.y
-			if not lastPunch[key] or (now - lastPunch[key]) >= CONFIG.punchCooldown then
-				target = t
-				break
-			end
-		end
-	end
-	if not target then return false, "no breakable ready" end
+	-- Target tile di DEPAN karakter (game 2D samping).
+	local s = playerState()
+	local facing = (s and s.facing) or 1
+	local tx = px + facing
+	local ty = py
 
-	local r = tryBreak(target.x, target.y)
+	local key = tx .. "," .. ty
+	local now = os.clock()
+	if lastPunch[key] and (now - lastPunch[key]) < CONFIG.punchCooldown then
+		return false, "cooldown " .. tx .. "," .. ty
+	end
+
+	local r = tryBreak(tx, ty)
 	if r == "hit" or r == "broke" then
-		return true, "break " .. target.x .. "," .. target.y .. " id=" .. tostring(target.fg)
+		return true, "break " .. tx .. "," .. ty
 	end
 	return false, "break failed: " .. tostring(r)
 end
@@ -744,18 +742,15 @@ local function autoPlantOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
 
-	local target = nil
-	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
-		if t.fg == 0 or t.fg == "" or t.fg == nil then
-			target = t
-			break
-		end
-	end
-	if not target then return false, "no empty tile" end
+	-- Tanam di tile DEPAN karakter.
+	local s = playerState()
+	local facing = (s and s.facing) or 1
+	local tx = px + facing
+	local ty = py
 
-	local r = tryPlace(target.x, target.y, CONFIG.plantId)
+	local r = tryPlace(tx, ty, CONFIG.plantId)
 	if r == "place" then
-		return true, "plant " .. target.x .. "," .. target.y
+		return true, "plant " .. tx .. "," .. ty
 	end
 	return false, "plant failed: " .. tostring(r)
 end
@@ -764,18 +759,15 @@ local function autoPlaceOnce()
 	local px, py = getPlayerTile()
 	if not px then return false, "no state" end
 
-	local target = nil
-	for _, t in ipairs(tilesAround(px, py, CONFIG.range)) do
-		if t.fg == 0 or t.fg == "" or t.fg == nil then
-			target = t
-			break
-		end
-	end
-	if not target then return false, "no empty tile" end
+	-- Taruh block di tile DEPAN karakter.
+	local s = playerState()
+	local facing = (s and s.facing) or 1
+	local tx = px + facing
+	local ty = py
 
-	local r = tryPlace(target.x, target.y, CONFIG.placeId)
+	local r = tryPlace(tx, ty, CONFIG.placeId)
 	if r == "place" then
-		return true, "place " .. target.x .. "," .. target.y
+		return true, "place " .. tx .. "," .. ty
 	end
 	return false, "place failed: " .. tostring(r)
 end
