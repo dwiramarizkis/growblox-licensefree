@@ -17,12 +17,32 @@ local player = Players.LocalPlayer
 repeat task.wait() until game:IsLoaded()
 
 -- ===========================================================================
--- 1. Anti-duplicate guard
+-- 1. Anti-duplicate guard (self-healing)
 -- ===========================================================================
-if _G.HipHub_GrowBlox_Running then
-	return
-end
 _G.HipHub_GrowBlox_Running = true
+
+-- Kalau ada sisa UI dari run sebelumnya, hancurkan dulu agar tidak bentrok.
+pcall(function()
+	local roots = {}
+	local function pushRoot(r)
+		if r then
+			table.insert(roots, r)
+		end
+	end
+	if type(gethui) == "function" then
+		pushRoot(gethui())
+	end
+	pushRoot(game:GetService("CoreGui"))
+	pushRoot(player:FindFirstChild("PlayerGui"))
+	for _, r in ipairs(roots) do
+		local old = r:FindFirstChild("HipHub_GrowBlox")
+		if old then
+			pcall(function()
+				old:Destroy()
+			end)
+		end
+	end
+end)
 
 -- ===========================================================================
 -- 2. Configuration
@@ -106,8 +126,17 @@ local CONFIG = {
 -- ===========================================================================
 -- 3. Character helpers
 -- ===========================================================================
-if not player.Character then
-	player.CharacterAdded:Wait()
+local function waitForCharacter(timeout)
+	timeout = timeout or 30
+	local waited = 0
+	while not player.Character do
+		if waited >= timeout then
+			return false
+		end
+		task.wait(0.5)
+		waited += 0.5
+	end
+	return true
 end
 
 local function getCharacter()
@@ -127,7 +156,11 @@ local function getHumanoid()
 	if not character then
 		return nil
 	end
-	return character:FindFirstChildOfClass("Humanoid")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		humanoid = character:FindFirstChild("Humanoid")
+	end
+	return humanoid
 end
 
 local function setWalkSpeed(speed)
@@ -374,13 +407,23 @@ local function fireClickDetector(clickDetector)
 		if ok then
 			return true
 		end
+		-- Synapse / scriptware style: fireclickdetector(detector, distance)
+		local part = clickDetector.Parent
+		if part and part:IsA("BasePart") then
+			ok = pcall(fire, clickDetector, 0)
+			if ok then
+				return true
+			end
+		end
 	end
 
 	local fireSignal = getExecutorFunction("firesignal")
 	if fireSignal then
-		local ok = pcall(fireSignal, clickDetector.MouseClick)
-		if ok then
-			return true
+		if clickDetector.MouseClick then
+			local ok = pcall(fireSignal, clickDetector.MouseClick)
+			if ok then
+				return true
+			end
 		end
 	end
 
@@ -424,9 +467,11 @@ local function fireProximityPrompt(prompt)
 
 	local fireSignal = getExecutorFunction("firesignal")
 	if fireSignal then
-		local ok = pcall(fireSignal, prompt.Triggered)
-		if ok then
-			return true
+		if prompt.Triggered then
+			local ok = pcall(fireSignal, prompt.Triggered)
+			if ok then
+				return true
+			end
 		end
 	end
 
@@ -441,6 +486,9 @@ local function fireProximityPrompt(prompt)
 end
 
 local function interactWithTarget(target)
+	if not target then
+		return false
+	end
 	if target.clickDetector then
 		if fireClickDetector(target.clickDetector) then
 			return true
@@ -457,36 +505,66 @@ end
 -- ===========================================================================
 -- 7. Farm actions
 -- ===========================================================================
-local function harvestSugarCane()
-	local target = findSugarCane()
+local function getTargetPart(target)
 	if not target then
-		return 0, "no target"
+		return nil
 	end
-
-	local part = target.part or target.clickDetector and target.clickDetector.Parent
-	if not part or not part:IsA("BasePart") then
-		return 0, "target has no part"
+	if target.part and target.part:IsA("BasePart") then
+		return target.part
 	end
+	local part = target.clickDetector and target.clickDetector.Parent
+	if part and part:IsA("BasePart") then
+		return part
+	end
+	part = target.prompt and target.prompt.Parent
+	if part and part:IsA("BasePart") then
+		return part
+	end
+	return nil
+end
 
+local function walkToTarget(target)
+	local part = getTargetPart(target)
+	if not part then
+		return false
+	end
 	setWalkSpeed(CONFIG.walkSpeed)
 	walkTo(part.Position)
-	if not waitUntilNear(part, CONFIG.interactDistance) then
-		return 0, "target too far"
+	return waitUntilNear(part, CONFIG.interactDistance)
+end
+
+local function doInteractions(target, hitsNeeded, interval)
+	local part = getTargetPart(target)
+	if not part then
+		return 0
 	end
 
 	local hits = 0
-	for i = 1, CONFIG.hitCount do
+	for i = 1, hitsNeeded do
 		if not part.Parent then
 			break
 		end
 		if interactWithTarget(target) then
 			hits += 1
 		end
-		if i < CONFIG.hitCount then
-			task.wait(CONFIG.hitInterval)
+		if i < hitsNeeded then
+			task.wait(interval)
 		end
 	end
+	return hits
+end
 
+local function harvestSugarCane()
+	local target = findSugarCane()
+	if not target then
+		return 0, "no target"
+	end
+
+	if not walkToTarget(target) then
+		return 0, "target too far"
+	end
+
+	local hits = doInteractions(target, CONFIG.hitCount, CONFIG.hitInterval)
 	if hits == 0 then
 		return 0, "click failed"
 	end
@@ -501,14 +579,7 @@ local function plantSeed()
 		return 0, "no plant spot"
 	end
 
-	local part = target.part or target.prompt and target.prompt.Parent
-	if not part or not part:IsA("BasePart") then
-		return 0, "target has no part"
-	end
-
-	setWalkSpeed(CONFIG.walkSpeed)
-	walkTo(part.Position)
-	if not waitUntilNear(part, CONFIG.interactDistance) then
+	if not walkToTarget(target) then
 		return 0, "target too far"
 	end
 
@@ -526,30 +597,11 @@ local function breakBlock()
 		return 0, "no break block"
 	end
 
-	local part = target.part or target.clickDetector and target.clickDetector.Parent
-	if not part or not part:IsA("BasePart") then
-		return 0, "target has no part"
-	end
-
-	setWalkSpeed(CONFIG.walkSpeed)
-	walkTo(part.Position)
-	if not waitUntilNear(part, CONFIG.interactDistance) then
+	if not walkToTarget(target) then
 		return 0, "target too far"
 	end
 
-	local hits = 0
-	for i = 1, CONFIG.breakHits do
-		if not part.Parent then
-			break
-		end
-		if interactWithTarget(target) then
-			hits += 1
-		end
-		if i < CONFIG.breakHits then
-			task.wait(CONFIG.breakInterval)
-		end
-	end
-
+	local hits = doInteractions(target, CONFIG.breakHits, CONFIG.breakInterval)
 	if hits == 0 then
 		return 0, "break interact failed"
 	end
@@ -564,14 +616,7 @@ local function placeBlock()
 		return 0, "no place spot"
 	end
 
-	local part = target.part or target.prompt and target.prompt.Parent
-	if not part or not part:IsA("BasePart") then
-		return 0, "target has no part"
-	end
-
-	setWalkSpeed(CONFIG.walkSpeed)
-	walkTo(part.Position)
-	if not waitUntilNear(part, CONFIG.interactDistance) then
+	if not walkToTarget(target) then
 		return 0, "target too far"
 	end
 
@@ -602,7 +647,7 @@ local function startLoop(name, enabled, action)
 					warn("[GrowBlox] " .. name .. " error: " .. tostring(err))
 				end
 			end
-			task.wait(0.5)
+			task.wait(0.25)
 		end
 	end)
 end
@@ -975,6 +1020,7 @@ end
 -- ===========================================================================
 -- 11. Error boundary
 -- ===========================================================================
+waitForCharacter()
 local uiOk, uiHandle = pcall(createWindUi)
 if not uiOk then
 	warn("[GrowBlox] WindUI failed (" .. tostring(uiHandle) .. "), using built-in fallback UI")
@@ -990,6 +1036,7 @@ end
 -- ===========================================================================
 task.spawn(function()
 	task.wait(2)
+	waitForCharacter(10)
 	local cane = findSugarCane()
 	local spot = findPlantSpot()
 	local block = findBreakBlock()
