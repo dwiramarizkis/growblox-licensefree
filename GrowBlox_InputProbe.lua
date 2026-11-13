@@ -2,10 +2,11 @@
 -- Jalankan SETELAH masuk world:
 --   loadstring(game:HttpGet("https://raw.githubusercontent.com/dwiramarizkis/growblox-licensefree/main/GrowBlox_InputProbe.lua"))()
 --
+-- Khusus ANDROID: GUI compact di kiri-bawah, tekan X untuk menyusut.
 -- Cara pakai:
 --   1. Jalankan script.
 --   2. Tekan GUI X agar isi GUI menyusut (tidak menghalangi layar).
---   3. Lakukan manual: gerak kiri/kanan, lompat, pukul tile, klik tile kosong untuk tanam.
+--   3. Lakukan manual di game: gerak kiri/kanan, lompat, pukul tile, klik tile kosong untuk tanam.
 --   4. Console akan merekam nama tombol/input yang game baca.
 --   5. Kirim hasilnya ke saya.
 --
@@ -27,41 +28,52 @@ end
 
 add("PlaceId", tostring(game.PlaceId))
 add("Player", tostring(player and player.Name))
+add("Device", "ANDROID")
 add("Touch", UIS.TouchEnabled and "ON" or "OFF")
 add("Keyboard", UIS.KeyboardEnabled and "ON" or "OFF")
 add("Gamepad", UIS.GamepadEnabled and "ON" or "OFF")
+add("Platform", tostring(Enum.Platform and UIS:GetPlatform() or "?"))
 
 -- ---------------------------------------------------------------------------
--- 1. Rekam input tombol keyboard (key down / key up)
+-- 1. Rekam input (keyboard/mouse/touch/gamepad) — tanpa mengubah apa pun
 -- ---------------------------------------------------------------------------
 local keyNames = {}
 local function onInputBegan(input, gameProcessed)
-	if input.UserInputType == Enum.UserInputType.Keyboard then
-		keyNames[#keyNames + 1] = "KEY_DOWN:" .. input.KeyCode.Name .. (gameProcessed and " (game)" or " (raw)")
-		print("[InputProbe] " .. keyNames[#keyNames])
+	local t = input.UserInputType
+	local line = "INPUT_BEGAN:" .. tostring(t)
+	if t == Enum.UserInputType.Keyboard then
+		line = line .. ":" .. input.KeyCode.Name
+	elseif t == Enum.UserInputType.MouseButton1 then
+		line = line .. ":LMB"
+	elseif t == Enum.UserInputType.MouseButton2 then
+		line = line .. ":RMB"
+	elseif t == Enum.UserInputType.Touch then
+		line = line .. ":TOUCH"
+	elseif t == Enum.UserInputType.Gamepad1 then
+		line = line .. ":GAMEPAD1:" .. tostring(input.KeyCode)
 	end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		keyNames[#keyNames + 1] = "MOUSE1_DOWN"
-		print("[InputProbe] MOUSE1_DOWN")
-	end
-	if input.UserInputType == Enum.UserInputType.Touch then
-		keyNames[#keyNames + 1] = "TOUCH"
-		print("[InputProbe] TOUCH")
-	end
+	line = line .. (gameProcessed and " (game)" or " (raw)")
+	keyNames[#keyNames + 1] = line
+	print("[InputProbe] " .. line)
 end
 local function onInputEnded(input)
-	if input.UserInputType == Enum.UserInputType.Keyboard then
-		keyNames[#keyNames + 1] = "KEY_UP:" .. input.KeyCode.Name
-		print("[InputProbe] " .. keyNames[#keyNames])
+	local t = input.UserInputType
+	local line = "INPUT_ENDED:" .. tostring(t)
+	if t == Enum.UserInputType.Keyboard then
+		line = line .. ":" .. input.KeyCode.Name
+	elseif t == Enum.UserInputType.MouseButton1 then
+		line = line .. ":LMB"
+	elseif t == Enum.UserInputType.Touch then
+		line = line .. ":TOUCH"
+	elseif t == Enum.UserInputType.Gamepad1 then
+		line = line .. ":GAMEPAD1:" .. tostring(input.KeyCode)
 	end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		keyNames[#keyNames + 1] = "MOUSE1_UP"
-		print("[InputProbe] MOUSE1_UP")
-	end
+	keyNames[#keyNames + 1] = line
+	print("[InputProbe] " .. line)
 end
 UIS.InputBegan:Connect(onInputBegan)
 UIS.InputEnded:Connect(onInputEnded)
-add("Input recorder", "AKTIF")
+add("Input recorder", "AKTIF (sentuh, keyboard, mouse, gamepad)")
 
 -- ---------------------------------------------------------------------------
 -- 2. Rekam keyboard "keyboard" yang game baca tiap frame? (hanya lihat InputBegan/Ended)
@@ -233,8 +245,8 @@ pcall(function()
 end)
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 310, 0, 190)
-frame.Position = UDim2.new(0, 8, 1, -198)
+frame.Size = UDim2.new(0, 300, 0, 180)
+frame.Position = UDim2.new(0, 4, 1, -184)
 frame.BackgroundColor3 = Color3.fromRGB(15, 18, 32)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -289,7 +301,7 @@ copyCorner.Parent = copyButton
 local contentVisible = true
 local function setContentVisible(state)
 	contentVisible = state
-	frame.Size = state and UDim2.new(0, 310, 0, 190) or UDim2.new(0, 140, 0, 34)
+	frame.Size = state and UDim2.new(0, 300, 0, 180) or UDim2.new(0, 130, 0, 34)
 	scroll.Visible = state
 end
 
