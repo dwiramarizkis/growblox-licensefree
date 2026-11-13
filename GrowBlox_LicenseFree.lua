@@ -352,13 +352,12 @@ end
 -- ===========================================================================
 -- 4. Aksi dasar game
 -- ===========================================================================
--- Sama persis dengan k.lua: SetTile dulu, fallback ByteNet, fallback remote lama.
+-- Prioritas pengiriman ke server:
+--   1. ByteNet Net.tile.send (server-authoritative, sama seperti k.lua)
+--   2. Remote lama SetTileRemote:FireServer
+--   3. Refs.SetTile (hanya visual client, JANGAN diandalkan)
 local function sendSetTile(layer, x, y, id)
-	if Refs.SetTile then
-		local ok, err = pcall(Refs.SetTile, layer, x, y, id, false, false)
-		if ok then return true end
-		warn("[GrowBlox] setTile game gagal: " .. tostring(err))
-	end
+	-- 1. ByteNet
 	if NetOk and type(Net) == "table" and type(Net.tile) == "table" then
 		local ok = pcall(Net.tile.send, {
 			layer = (layer == "bg") and 2 or 1,
@@ -367,12 +366,30 @@ local function sendSetTile(layer, x, y, id)
 			id = id,
 			flip = false,
 		})
-		if ok then return true end
-	elseif SetTileRemote then
-		pcall(function()
+		if ok then
+			return true
+		end
+		warn("[GrowBlox] ByteNet tile send gagal")
+	end
+
+	-- 2. Remote lama
+	if SetTileRemote then
+		local ok = pcall(function()
 			SetTileRemote:FireServer(layer, x, y, id, false)
 		end)
-		return true
+		if ok then
+			return true
+		end
+		warn("[GrowBlox] SetTileRemote gagal")
+	end
+
+	-- 3. SetTile client (visual saja - terakhir)
+	if Refs.SetTile then
+		local ok = pcall(Refs.SetTile, layer, x, y, id, false, false)
+		if ok then
+			warn("[GrowBlox] WARNING: hanya pakai SetTile visual, server mungkin tidak terima")
+			return true
+		end
 	end
 	return false
 end
@@ -381,12 +398,12 @@ local function placeTile(layer, x, y, id)
 	if not sendSetTile(layer, x, y, id) then
 		return false
 	end
-	-- Update grid lokal + inventory (sama seperti k.lua)
+	-- Update grid lokal supaya loop tidak place tile yang sama berulang.
 	local grid = Refs.World and Refs.World[layer]
 	if grid and grid[y] then
 		grid[y][x] = id
 	end
-	invRemove(id, 1)
+	-- JANGAN invRemove manual; biarkan server yang update inventory.
 	return true
 end
 
@@ -395,28 +412,13 @@ local function punchTile(x, y)
 		local ok, err = pcall(Refs.Punch, x, y, CONFIG.mutePunch or nil, nil)
 		if not ok then
 			warn("[GrowBlox] punch error: " .. tostring(err))
-			return false
-		end
-		return true
-	end
-
-	-- Fallback 1: ByteNet langsung
-	if NetOk and type(Net) == "table" and type(Net.tile) == "table" then
-		local ok = pcall(Net.tile.send, {
-			layer = 1,
-			x = x,
-			y = y,
-			id = 0,
-			flip = false,
-		})
-		if ok then
-			warn("[GrowBlox] Punch tidak ketemu, fallback ByteNet tile id=0")
+		else
 			return true
 		end
 	end
 
-	-- Fallback 2: SetTile id=0
-	warn("[GrowBlox] Punch tidak ketemu, fallback setTile 0")
+	-- Fallback: kirim tile kosong via jalur server (ByteNet/remote)
+	warn("[GrowBlox] Punch gagal/tidak ada, fallback tile id=0 via server")
 	return sendSetTile("fg", x, y, 0)
 end
 
