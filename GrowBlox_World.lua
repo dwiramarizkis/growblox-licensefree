@@ -285,19 +285,26 @@ local report = table.concat(lines, "\n")
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "GrowBloxWorld"
 screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screenGui.DisplayOrder = 999
+screenGui.DisplayOrder = 2147483647
 pcall(function()
-	local parent
-	if type(gethui) == "function" then parent = gethui() end
-	if not parent then parent = player:FindFirstChild("PlayerGui") end
-	if not parent then parent = game:GetService("CoreGui") end
+	-- Prioritaskan PlayerGui agar pasti terlihat di layar.
+	local parent = player:FindFirstChild("PlayerGui")
+	if not parent and type(gethui) == "function" then
+		parent = gethui()
+	end
+	if not parent then
+		parent = game:GetService("CoreGui")
+	end
 	screenGui.Parent = parent
+	add("GUI parent", parent and parent:GetFullName() or "TIDAK ADA")
 end)
 
 local frame = Instance.new("Frame")
 frame.Size = UDim2.new(0, 300, 0, 180)
-frame.Position = UDim2.new(0, 4, 1, -184)
+frame.Position = UDim2.new(0.5, -150, 1, -184)
+frame.AnchorPoint = Vector2.new(0.5, 1)
 frame.BackgroundColor3 = Color3.fromRGB(15, 18, 32)
 frame.BorderSizePixel = 0
 frame.Active = true
